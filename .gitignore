@@ -25,7 +25,13 @@ src-tauri/target/
 # Tauri Codegen, Schemas & Icons
 src-tauri/gen/
 src-tauri/icons/
+src-tauri/app-icon.png
 icons/
+
+# Documentation & Internal Plans
+Architecture.md
+building_plan.md
+workout-app-plan_v1.4.md
 
 # Logs & Diagnostics
 logs/
