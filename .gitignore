@@ -11,6 +11,9 @@ out/
 .vite/
 *.tsbuildinfo
 
+# Public Assets
+public/
+
 # Rust / Cargo Build Outputs
 target/
 src-tauri/target/
@@ -38,9 +41,7 @@ lerna-debug.log*
 *.local
 
 # Editor & IDE Directories
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
+.vscode/
 .idea/
 *.suo
 *.ntvs*
