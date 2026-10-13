@@ -1,7 +1,9 @@
-# Dependencies
+# Dependencies & Lockfiles
 node_modules/
 .pnp
 .pnp.js
+package-lock.json
+Cargo.lock
 
 # Frontend Build & Caches
 dist/
@@ -20,8 +22,10 @@ src-tauri/target/
 **/*.rs.bk
 *.pdb
 
-# Tauri Codegen & Auto-generated Schemas
+# Tauri Codegen, Schemas & Icons
 src-tauri/gen/
+src-tauri/icons/
+icons/
 
 # Logs & Diagnostics
 logs/
