@@ -1945,4 +1945,166 @@ input:checked + .slider:before {
   margin: 0;
 }
 
+/* ==========================================================================
+   14-Day Cycle Adherence Ribbon (Option 3)
+   ========================================================================== */
+.opt3-ribbon-card {
+  padding: 1.2rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.cal-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.cal-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-white);
+}
+
+.cal-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+
+.dot-done { background: #10b981; }
+.dot-missed { background: #ef4444; }
+.dot-today { background: #6366f1; }
+.dot-rest { background: #94a3b8; }
+
+.opt3-nodes-row {
+  display: grid;
+  grid-template-columns: repeat(14, 1fr);
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+@media (max-width: 860px) {
+  .opt3-nodes-row {
+    grid-template-columns: repeat(7, 1fr);
+  }
+}
+
+.opt3-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.45rem 0.2rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.opt3-node.clickable-node {
+  cursor: pointer;
+}
+
+.opt3-node.clickable-node:hover {
+  background: rgba(99, 102, 241, 0.18);
+  transform: translateY(-1px);
+}
+
+.opt3-node.today-node {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.45);
+  box-shadow: 0 0 16px rgba(99, 102, 241, 0.18);
+}
+
+.opt3-dow {
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.opt3-node.today-node .opt3-dow {
+  color: #a5b4fc;
+}
+
+.opt3-date-num {
+  font-size: 0.64rem;
+  color: var(--text-muted);
+  opacity: 0.75;
+  line-height: 1.1;
+}
+
+.opt3-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 800;
+  margin: 0.3rem 0;
+}
+
+.icon-done {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.25);
+}
+
+.icon-missed {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
+}
+
+.icon-rest {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.icon-today {
+  background: var(--accent-gradient);
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(99, 102, 241, 0.6);
+}
+
+.icon-upcoming {
+  background: rgba(99, 102, 241, 0.1);
+  color: #818cf8;
+  border: 1px dashed rgba(99, 102, 241, 0.35);
+}
+
+.icon-untracked {
+  background: rgba(15, 23, 42, 0.5);
+  color: var(--text-muted);
+  border: 1px dashed var(--border-subtle);
+}
+
+.opt3-lbl {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+
 

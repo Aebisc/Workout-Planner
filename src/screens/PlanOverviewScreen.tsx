@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../api';
-import { Plan, Settings } from '../types';
+import { CompletedSession, Plan, Settings } from '../types';
 
 interface PlanOverviewScreenProps {
   plan: Plan;
@@ -8,6 +8,13 @@ interface PlanOverviewScreenProps {
   onSelectSession: (sessionNumber: number) => void;
   onRefreshPlan: () => void;
   onOpenSettings: () => void;
+}
+
+function toLocalDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
@@ -18,11 +25,19 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
   onOpenSettings,
 }) => {
   const [regenerating, setRegenerating] = useState(false);
+  const [history, setHistory] = useState<CompletedSession[]>([]);
+
+  useEffect(() => {
+    api.getSessionHistory().then(setHistory).catch(console.error);
+  }, [plan]);
 
   const handleRegenerate = async () => {
     setRegenerating(true);
     try {
       await api.generatePlan();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      localStorage.setItem('mgp_cycle_anchor_date', toLocalDateKey(today));
       onRefreshPlan();
     } catch (err) {
       alert(`Regeneration failed: ${err}`);
@@ -31,20 +46,149 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
     }
   };
 
-  // Build calendar days mapping when calendar_view is active
-  const L = plan.cycle.length_days;
+  // Build cycle pattern array (length L)
+  const L = Math.max(1, plan.cycle.length_days);
   const S = plan.cycle.sessions_count;
-  const sessionDayMap = new Map<number, typeof plan.sessions[0]>();
+  const cyclePattern: Array<typeof plan.sessions[0] | null> = Array(L).fill(null);
 
-  if (settings.calendar_view && S > 0) {
-    plan.sessions.forEach((session, sIdx) => {
+  if (S > 0) {
+    plan.sessions.forEach((sess, sIdx) => {
       const dayIndex = Math.floor((sIdx * L) / S);
-      sessionDayMap.set(dayIndex, session);
+      cyclePattern[dayIndex] = sess;
     });
   }
 
+  // Group history by local date key
+  const historyByDate = new Map<string, CompletedSession[]>();
+  history.forEach((sess) => {
+    const key = toLocalDateKey(new Date(sess.timestamp));
+    const list = historyByDate.get(key) || [];
+    list.push(sess);
+    historyByDate.set(key, list);
+  });
+
+  // Cycle Anchor Date & Dynamic Rest Day Positioning
+  let anchorKey = localStorage.getItem('mgp_cycle_anchor_date');
+  if (!anchorKey) {
+    if (history.length > 0) {
+      const earliestTs = Math.min(...history.map((s) => s.timestamp));
+      const d = new Date(earliestTs);
+      d.setHours(0, 0, 0, 0);
+      anchorKey = toLocalDateKey(d);
+    } else {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      anchorKey = toLocalDateKey(today);
+    }
+    localStorage.setItem('mgp_cycle_anchor_date', anchorKey);
+  }
+
+  const [aY, aM, aD] = anchorKey.split('-').map(Number);
+  const anchorMidnight = new Date(aY, aM - 1, aD, 0, 0, 0, 0);
+  const todayMidnight = new Date();
+  todayMidnight.setHours(0, 0, 0, 0);
+
+  // Build 14-Day Ribbon Array (offset from -10 to +3)
+  const ribbonOffsets = [-10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3];
+  let elapsedTrainingDays = 0;
+  let completedDaysCount = 0;
+
+  const ribbonDays = ribbonOffsets.map((offset) => {
+    const date = new Date(todayMidnight);
+    date.setDate(todayMidnight.getDate() + offset);
+
+    const diffDays = Math.round((date.getTime() - anchorMidnight.getTime()) / 86_400_000);
+    const cycleIdx = ((diffDays % L) + L) % L;
+    const scheduledSession = cyclePattern[cycleIdx];
+
+    const dateKey = toLocalDateKey(date);
+    const completedOnDate = historyByDate.get(dateKey) || [];
+
+    const isToday = offset === 0;
+    const dow = date.toLocaleDateString(undefined, { weekday: 'short' });
+    const dayOfMonth = date.getDate();
+    const dateLabel = date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    });
+
+    let circleClass = '';
+    let icon = '';
+    let label = '';
+    let tooltip = '';
+    let clickable = false;
+    let sessionNumber: number | undefined;
+
+    // Track consistency for past & today days on or after anchor
+    if (diffDays >= 0 && offset <= 0 && (scheduledSession !== null || completedOnDate.length > 0)) {
+      elapsedTrainingDays++;
+      if (completedOnDate.length > 0) {
+        completedDaysCount++;
+      }
+    }
+
+    if (completedOnDate.length > 0) {
+      // Case A: User completed a workout on this day
+      circleClass = 'icon-done';
+      icon = '✓';
+      label = `S${completedOnDate[0].session_number}`;
+      tooltip = `${dateLabel}: Session ${completedOnDate[0].session_number} completed (${completedOnDate[0].total_sets} sets)`;
+    } else if (scheduledSession === null) {
+      // Case B: Scheduled Rest Day
+      circleClass = 'icon-rest';
+      icon = '🌙';
+      label = 'Rest';
+      tooltip = `${dateLabel}: Scheduled Cycle Rest & Recovery Day`;
+    } else if (offset < 0) {
+      // Case C: Past Scheduled Training Day with No Logged Workout
+      if (diffDays < 0) {
+        circleClass = 'icon-untracked';
+        icon = '·';
+        label = '·';
+        tooltip = `${dateLabel}: Untracked`;
+      } else {
+        circleClass = 'icon-missed';
+        icon = '✕';
+        label = 'Miss';
+        tooltip = `${dateLabel}: Missed Session ${scheduledSession.session_number}`;
+      }
+    } else if (offset === 0) {
+      // Case D: Today — Workout Due
+      circleClass = 'icon-today';
+      icon = '🎯';
+      label = `S${scheduledSession.session_number}`;
+      tooltip = `Today (${dateLabel}): Session ${scheduledSession.session_number} due — click to start`;
+      clickable = true;
+      sessionNumber = scheduledSession.session_number;
+    } else {
+      // Case E: Future Scheduled Training Day
+      circleClass = 'icon-upcoming';
+      icon = '⏳';
+      label = `S${scheduledSession.session_number}`;
+      tooltip = `${dateLabel}: Upcoming Session ${scheduledSession.session_number}`;
+    }
+
+    return {
+      dateKey,
+      dow,
+      dayOfMonth,
+      isToday,
+      circleClass,
+      icon,
+      label,
+      tooltip,
+      clickable,
+      sessionNumber,
+    };
+  });
+
+  const consistencyLabel =
+    elapsedTrainingDays > 0
+      ? `${Math.round((completedDaysCount / elapsedTrainingDays) * 100)}% Consistency`
+      : 'New Cycle';
+
   const calendarDays = Array.from({ length: L }, (_, dIdx) => {
-    const session = sessionDayMap.get(dIdx);
+    const session = cyclePattern[dIdx];
     return {
       dayNumber: dIdx + 1,
       isTraining: !!session,
@@ -95,6 +239,42 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
           ⚠ <strong>Maintenance Notice:</strong> Direct maintenance sets for non-priority muscles were omitted because they exceeded 50% of your cycle set budget. Growth volume is fully prioritized on your chosen target muscles.
         </div>
       )}
+
+      {/* 14-Day Cycle Adherence Ribbon (Option 3) */}
+      <div className="card opt3-ribbon-card">
+        <div className="cal-header-row">
+          <div className="cal-header-title">
+            <span>⚡ 14-Day Cycle Adherence</span>
+            <span className="badge badge-primary">{consistencyLabel}</span>
+          </div>
+          <div className="cal-legend">
+            <span><span className="legend-dot dot-done" />Trained (✓)</span>
+            <span><span className="legend-dot dot-missed" />Missed (✕)</span>
+            <span><span className="legend-dot dot-today" />Today (🎯)</span>
+            <span><span className="legend-dot dot-rest" />Rest (🌙)</span>
+          </div>
+        </div>
+
+        <div className="opt3-nodes-row">
+          {ribbonDays.map((day) => (
+            <div
+              key={day.dateKey}
+              className={`opt3-node ${day.isToday ? 'today-node' : ''} ${day.clickable ? 'clickable-node' : ''}`}
+              title={day.tooltip}
+              onClick={() => {
+                if (day.clickable && day.sessionNumber) {
+                  onSelectSession(day.sessionNumber);
+                }
+              }}
+            >
+              <span className="opt3-dow">{day.isToday ? 'TODAY' : day.dow}</span>
+              <span className="opt3-date-num">{day.dayOfMonth}</span>
+              <div className={`opt3-circle ${day.circleClass}`}>{day.icon}</div>
+              <span className="opt3-lbl">{day.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {settings.calendar_view ? (
         <div className="calendar-view-section">

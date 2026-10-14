@@ -337,26 +337,29 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   </div>
 
                   <div className="session-history-exercises-table">
-                    {s.exercises_summary.map((ex, idx) => (
-                      <div key={idx} className="history-exercise-line">
-                        <div className="history-ex-name-col">
-                          <strong>{ex.exercise_name}</strong>
-                          <span className="history-ex-load">
-                            {formatWeight(ex.added_weight_kg, settings.units)}
-                          </span>
-                        </div>
-                        <div className="history-ex-reps-col">
-                          {ex.reps_or_seconds.map((r, rIdx) => (
-                            <span key={rIdx} className="history-rep-pill">
-                              Set {rIdx + 1}: {r} reps
+                    {s.exercises_summary.map((ex, idx) => {
+                      const isTimeBased = exercises.find((e) => e.id === ex.exercise_id)?.time_based ?? false;
+                      return (
+                        <div key={idx} className="history-exercise-line">
+                          <div className="history-ex-name-col">
+                            <strong>{ex.exercise_name}</strong>
+                            <span className="history-ex-load">
+                              {formatWeight(ex.added_weight_kg, settings.units)}
                             </span>
-                          ))}
+                          </div>
+                          <div className="history-ex-reps-col">
+                            {ex.reps_or_seconds.map((r, rIdx) => (
+                              <span key={rIdx} className="history-rep-pill">
+                                Set {rIdx + 1}: {r}{isTimeBased ? 's' : ' reps'}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="history-ex-rir-col">
+                            Avg RIR {ex.avg_rir.toFixed(1)}
+                          </div>
                         </div>
-                        <div className="history-ex-rir-col">
-                          Avg RIR {ex.avg_rir.toFixed(1)}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );

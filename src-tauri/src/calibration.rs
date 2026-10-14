@@ -156,7 +156,7 @@ pub fn choose_starting_variation<'a>(
     // Fallback: pick the exercise whose estimated reps are closest to 12
     for &ex in &ladder {
         let frac = get_exercise_bw_fraction(ex, settings.bed_height_cm);
-        let load = compute_load(frac, body_weight_kg, 0.0);
+        let load = compute_exercise_load(ex, frac, body_weight_kg, 0.0);
         let est_reps = reps_at_new_load(one_rm, load);
         let diff = (est_reps - 12.0).abs();
         if diff < best_diff_from_target {

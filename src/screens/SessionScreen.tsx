@@ -29,7 +29,14 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
 
   // Active workout session's sets: Record<blockIndex, SetLog[]>
-  const [currentSessionSets, setCurrentSessionSets] = useState<Record<number, SetLog[]>>({});
+  const [currentSessionSets, setCurrentSessionSets] = useState<Record<number, SetLog[]>>(() => {
+    try {
+      const saved = sessionStorage.getItem(`mgp_active_session_${sessionNumber}`);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
 
   // Inputs for logging active set per block
   const [activeInput, setActiveInput] = useState<
@@ -106,8 +113,30 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
   };
 
   useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(`mgp_active_session_${sessionNumber}`);
+      setCurrentSessionSets(saved ? JSON.parse(saved) : {});
+    } catch {
+      setCurrentSessionSets({});
+    }
     loadData();
   }, [sessionNumber]);
+
+  useEffect(() => {
+    const key = `mgp_active_session_${sessionNumber}`;
+    try {
+      const allSets = Object.values(currentSessionSets).flat();
+      if (allSets.length > 0) {
+        if (allSets.every((s) => s.session_number === sessionNumber)) {
+          sessionStorage.setItem(key, JSON.stringify(currentSessionSets));
+        }
+      } else {
+        sessionStorage.removeItem(key);
+      }
+    } catch (e) {
+      console.error('Failed to sync active session sets to sessionStorage', e);
+    }
+  }, [currentSessionSets, sessionNumber]);
 
   const handleAddSet = (blockIndex: number, exerciseId: string) => {
     const input = activeInput[blockIndex] || { reps: 10, rir: 2 };
@@ -178,6 +207,13 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
       };
 
       const suggestions = await api.completeSession(completedSession, allLoggedSets);
+
+      try {
+        sessionStorage.removeItem(`mgp_active_session_${session.session_number}`);
+      } catch (e) {
+        console.error('Failed to remove active session from sessionStorage', e);
+      }
+      setCurrentSessionSets({});
 
       setSessionCompletedSummary({
         completedSession,
@@ -338,7 +374,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                     })
                   }
                 >
-                  🔄 Swap Exercise
+                  ⇄ Swap Exercise
                 </button>
               </div>
 

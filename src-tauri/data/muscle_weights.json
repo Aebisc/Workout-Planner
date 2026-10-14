@@ -48,7 +48,7 @@
     "abs": 0.0
   },
   "diamond_push_up": {
-    "chest": 0.6,
+    "chest": 0.85,
     "back": 0.0,
     "biceps": 0.0,
     "triceps": 1.0,
@@ -64,10 +64,10 @@
     "abs": 0.0
   },
   "db_pullover": {
-    "chest": 0.5,
-    "back": 0.8,
+    "chest": 0.8,
+    "back": 0.6,
     "biceps": 0.0,
-    "triceps": 0.3,
+    "triceps": 0.4,
     "forearms": 0.0,
     "abs": 0.0
   },
@@ -86,6 +86,13 @@
     "abs": 0.0
   },
   "pull_up": {
+    "chest": 0.0,
+    "back": 1.0,
+    "biceps": 0.5,
+    "forearms": 0.3,
+    "abs": 0.0
+  },
+  "pause_pull_up": {
     "chest": 0.0,
     "back": 1.0,
     "biceps": 0.5,

@@ -136,14 +136,30 @@ pub fn detect_stall(exercise_id: &str, session_logs: &[Vec<SetLog>]) -> bool {
 /// Suspends the 2-set block minimum.
 pub fn apply_deload(plan: &Plan) -> Plan {
     let mut deload_plan = plan.clone();
-
     for session in &mut deload_plan.sessions {
+        let original_total: u32 = session.blocks.iter().map(|b| b.sets).sum();
+        let target_total = ((original_total as f64) * 0.5).round().max(1.0) as u32;
+
         for block in &mut session.blocks {
             let halved = ((block.sets as f64) * 0.5).round() as u32;
             block.sets = halved.max(1);
         }
-    }
 
+        let mut current_total: u32 = session.blocks.iter().map(|b| b.sets).sum();
+        while current_total > target_total {
+            if let Some(max_block) = session
+                .blocks
+                .iter_mut()
+                .filter(|b| b.sets > 1)
+                .max_by_key(|b| b.sets)
+            {
+                max_block.sets -= 1;
+                current_total -= 1;
+            } else {
+                break;
+            }
+        }
+    }
     deload_plan
 }
 
@@ -189,10 +205,11 @@ pub fn update_profile_from_set(profile: &mut Profile, log: &SetLog) {
             .get(&log.exercise_id)
             .copied()
             .unwrap_or(0);
-        if log.reps_or_seconds > current_max {
+        let estimated_capacity = log.reps_or_seconds + log.reps_from_failure;
+        if estimated_capacity > current_max {
             profile
                 .estimated_max_reps
-                .insert(log.exercise_id.clone(), log.reps_or_seconds);
+                .insert(log.exercise_id.clone(), estimated_capacity);
         }
     }
 }

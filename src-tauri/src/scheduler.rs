@@ -440,6 +440,7 @@ fn build_sessions(
     profile: &Profile,
 ) -> Vec<Session> {
     let mut sessions = Vec::new();
+    let mut stretched_covered: std::collections::HashSet<Muscle> = std::collections::HashSet::new();
 
     for s_idx in 0..(cycle.sessions_count as usize) {
         let block_sizes = if sets_per_session == 3
@@ -513,7 +514,7 @@ fn build_sessions(
                     session_focus.push(chosen_muscle);
                 }
 
-                let prefer_stretch = s_idx == 0; // stretch variant on first session
+                let prefer_stretch = !stretched_covered.contains(&chosen_muscle);
                 if let Some(ex) = select_exercise_for_muscle(
                     chosen_muscle,
                     exercises,
@@ -523,6 +524,9 @@ fn build_sessions(
                     profile,
                     settings,
                 ) {
+                    if ex.stretched_position {
+                        stretched_covered.insert(chosen_muscle);
+                    }
                     let est_reps = profile.estimated_max_reps.get(&ex.id).copied().unwrap_or(0);
                     let added_kg = if settings.backpack && est_reps > 20 {
                         calculate_backpack_weight(
@@ -687,7 +691,7 @@ pub fn generate_plan(
     profile: &Profile,
     exercises: &[Exercise],
     mut maintenance_deficits: HashMap<Muscle, f64>,
-    cumulative_effective: HashMap<Muscle, f64>,
+    mut cumulative_effective: HashMap<Muscle, f64>,
 ) -> Plan {
     let cycle = days_per_week_to_cycle(settings.days_per_week);
     let b_cycle = compute_cycle_budget(settings.sets_per_day, cycle.sessions_count);
@@ -772,6 +776,26 @@ pub fn generate_plan(
         settings,
         profile,
     );
+
+    let exercises_map: HashMap<String, &Exercise> =
+        exercises.iter().map(|e| (e.id.clone(), e)).collect();
+    for session in &sessions {
+        for block in &session.blocks {
+            if let Some(ex) = exercises_map.get(&block.exercise_id) {
+                for m in Muscle::ALL {
+                    let weight = if ex.primary_muscle == m {
+                        1.0
+                    } else {
+                        ex.contribution_weights.get(m)
+                    };
+                    if weight > 0.0 {
+                        *cumulative_effective.entry(m).or_insert(0.0) +=
+                            block.sets as f64 * weight;
+                    }
+                }
+            }
+        }
+    }
 
     Plan {
         cycle,

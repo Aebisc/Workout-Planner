@@ -315,7 +315,11 @@ pub fn log_set(
         let all_logs = storage.load_set_logs()?;
         let recent_exercise_logs: Vec<SetLog> = all_logs
             .into_iter()
-            .filter(|l| l.exercise_id == log.exercise_id)
+            .filter(|l| {
+                l.exercise_id == log.exercise_id
+                    && l.session_number == log.session_number
+                    && l.block_index == log.block_index
+            })
             .collect();
 
         let suggestion = evaluate_progression(blk, ex, &recent_exercise_logs, &settings);
@@ -395,13 +399,13 @@ pub fn complete_session(
         });
 
         if let (Some(ex), Some(blk)) = (exercise, block) {
-            let all_logs = storage.load_set_logs()?;
-            let recent_exercise_logs: Vec<SetLog> = all_logs
-                .into_iter()
-                .filter(|l| l.exercise_id == set.exercise_id)
+            let current_block_sets: Vec<SetLog> = sets
+                .iter()
+                .filter(|l| l.exercise_id == set.exercise_id && l.block_index == set.block_index)
+                .cloned()
                 .collect();
 
-            if let Some(sugg) = evaluate_progression(blk, ex, &recent_exercise_logs, &settings) {
+            if let Some(sugg) = evaluate_progression(blk, ex, &current_block_sets, &settings) {
                 if !suggestions.iter().any(|s: &ProgressionSuggestion| s.exercise_id == sugg.exercise_id) {
                     suggestions.push(sugg);
                 }
