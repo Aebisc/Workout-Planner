@@ -98,6 +98,8 @@ export interface Plan {
   maintenance_deficits: Record<Muscle, number>;
   cumulative_effective_sets: Record<Muscle, number>;
   maintenance_dropped: boolean;
+  is_deload?: boolean;
+  pre_deload_sessions?: Session[] | null;
 }
 
 export interface SetLog {
@@ -119,11 +121,19 @@ export interface Warning {
 }
 
 export interface ProgressionSuggestion {
+  session_number: number;
+  block_index: number;
   exercise_id: string;
   action: string;
   message: string;
   new_added_weight_kg: number | null;
   next_exercise_id: string | null;
+  new_tempo_cue: string | null;
+}
+
+export interface CompleteSessionResponse {
+  suggestions: ProgressionSuggestion[];
+  deload_cycle_completed: boolean;
 }
 
 export interface SessionExerciseSummary {

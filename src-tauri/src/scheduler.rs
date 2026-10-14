@@ -803,6 +803,8 @@ pub fn generate_plan(
         maintenance_deficits,
         cumulative_effective_sets: cumulative_effective,
         maintenance_dropped,
+        is_deload: false,
+        pre_deload_sessions: None,
     }
 }
 

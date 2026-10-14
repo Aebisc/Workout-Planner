@@ -9,6 +9,8 @@ use crate::models::{
 /// 3. Harder variation (next rung on ladder).
 /// 4. Backpack weight (if enabled, in 1.5L / 5L bottle units).
 pub fn evaluate_progression(
+    session_number: u32,
+    block_index: usize,
     block: &Block,
     exercise: &Exercise,
     recent_logs: &[SetLog],
@@ -25,11 +27,14 @@ pub fn evaluate_progression(
 
     if hard_sets.is_empty() {
         return Some(ProgressionSuggestion {
+            session_number,
+            block_index,
             exercise_id: exercise.id.clone(),
             action: "effort_check".to_string(),
             message: "Sets were ended 4+ reps from failure. Aim to bring sets within 0-3 reps of failure for effective growth stimulus.".to_string(),
             new_added_weight_kg: None,
             next_exercise_id: None,
+            new_tempo_cue: None,
         });
     }
 
@@ -45,23 +50,44 @@ pub fn evaluate_progression(
         };
 
         if let Some(ref harder_id) = exercise.harder_id {
-            // Execution intensifiers come before variation advance per §8
-            Some(ProgressionSuggestion {
-                exercise_id: exercise.id.clone(),
-                action: "intensify_execution".to_string(),
-                message: format!(
-                    "Top reps reached on all sets. Deepen the stimulus first: try a 3-4s lowering tempo, pause at the bottom{}. When this feels mastered, advance to the next variation: {}.",
-                    partials_cue,
-                    harder_id
-                ),
-                new_added_weight_kg: None,
-                next_exercise_id: Some(harder_id.clone()),
-            })
+            if !block.tempo_cue.contains("3-4s") {
+                Some(ProgressionSuggestion {
+                    session_number,
+                    block_index,
+                    exercise_id: exercise.id.clone(),
+                    action: "intensify_execution".to_string(),
+                    message: format!(
+                        "Top reps reached on all sets. Deepen the stimulus first: try a 3-4s lowering tempo, pause at the bottom{}. When this feels mastered, advance to the next variation: {}.",
+                        partials_cue,
+                        harder_id
+                    ),
+                    new_added_weight_kg: None,
+                    next_exercise_id: Some(harder_id.clone()),
+                    new_tempo_cue: Some(format!("Slow 3-4s lowering, 1s pause at bottom{}", partials_cue)),
+                })
+            } else {
+                Some(ProgressionSuggestion {
+                    session_number,
+                    block_index,
+                    exercise_id: exercise.id.clone(),
+                    action: "advance_variation".to_string(),
+                    message: format!(
+                        "You've mastered the intensified tempo on {}! Advance to the next ladder rung: {}.",
+                        exercise.name,
+                        harder_id
+                    ),
+                    new_added_weight_kg: None,
+                    next_exercise_id: Some(harder_id.clone()),
+                    new_tempo_cue: Some("Controlled 2-3s negative".to_string()),
+                })
+            }
         } else if settings.backpack {
             let current_weight = block.added_weight_kg;
             let next_weight = current_weight + 1.5;
             let bottle_cue = format_backpack_loading(next_weight, settings.units);
             Some(ProgressionSuggestion {
+                session_number,
+                block_index,
                 exercise_id: exercise.id.clone(),
                 action: "add_backpack_weight".to_string(),
                 message: format!(
@@ -70,10 +96,13 @@ pub fn evaluate_progression(
                 ),
                 new_added_weight_kg: Some(next_weight),
                 next_exercise_id: None,
+                new_tempo_cue: None,
             })
         } else {
             // Execution intensifiers for exercises without harder variations (e.g. dumbbell exercises)
             Some(ProgressionSuggestion {
+                session_number,
+                block_index,
                 exercise_id: exercise.id.clone(),
                 action: "intensify_execution".to_string(),
                 message: format!(
@@ -82,10 +111,13 @@ pub fn evaluate_progression(
                 ),
                 new_added_weight_kg: None,
                 next_exercise_id: None,
+                new_tempo_cue: Some(format!("Slow 3-4s lowering, 1s pause at bottom{}", partials_cue)),
             })
         }
     } else {
         Some(ProgressionSuggestion {
+            session_number,
+            block_index,
             exercise_id: exercise.id.clone(),
             action: "add_reps".to_string(),
             message: format!(
@@ -94,8 +126,79 @@ pub fn evaluate_progression(
             ),
             new_added_weight_kg: None,
             next_exercise_id: None,
+            new_tempo_cue: None,
         })
     }
+}
+
+/// Detects stall from historical set logs grouped across chronological exposures:
+/// 1. Filters logs to matching exercise and hard sets (reps_from_failure <= 3).
+/// 2. Groups into distinct exposures separated by > 3 hours or distinct session_number.
+/// 3. Checks if added_weight_kg increased across last 3 exposures (if so, not a stall).
+/// 4. Checks if best hard-set reps failed to increase across the 3 exposures.
+pub fn detect_stall_from_all_logs(exercise_id: &str, all_logs: &[SetLog]) -> bool {
+    let mut matching_logs: Vec<SetLog> = all_logs
+        .iter()
+        .filter(|l| l.exercise_id == exercise_id && l.reps_from_failure <= 3)
+        .cloned()
+        .collect();
+
+    if matching_logs.is_empty() {
+        return false;
+    }
+
+    matching_logs.sort_by_key(|l| l.timestamp);
+
+    let mut exposures: Vec<Vec<SetLog>> = Vec::new();
+    let three_hours_ms: i64 = 3 * 3600 * 1000;
+
+    for log in matching_logs {
+        let new_group = if let Some(last_group) = exposures.last() {
+            if let Some(last_log) = last_group.last() {
+                (log.timestamp - last_log.timestamp).abs() > three_hours_ms
+                    || log.session_number != last_log.session_number
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+
+        if new_group {
+            exposures.push(vec![log]);
+        } else {
+            exposures.last_mut().unwrap().push(log);
+        }
+    }
+
+    if exposures.len() < 3 {
+        return false;
+    }
+
+    let last_three = &exposures[exposures.len() - 3..];
+
+    // Check if added load increased across the exposures (0 is oldest, 2 is newest)
+    let w0 = last_three[2]
+        .iter()
+        .map(|l| (l.added_weight_kg * 1000.0).round() as i64)
+        .max()
+        .unwrap_or(0);
+    let w1 = last_three[1]
+        .iter()
+        .map(|l| (l.added_weight_kg * 1000.0).round() as i64)
+        .max()
+        .unwrap_or(0);
+    let w2 = last_three[0]
+        .iter()
+        .map(|l| (l.added_weight_kg * 1000.0).round() as i64)
+        .max()
+        .unwrap_or(0);
+
+    if w0 > w1 || w1 > w2 {
+        return false;
+    }
+
+    detect_stall(exercise_id, last_three)
 }
 
 /// Detects stall: 3 consecutive exposures to an exercise without rep or load progress.
@@ -134,8 +237,16 @@ pub fn detect_stall(exercise_id: &str, session_logs: &[Vec<SetLog>]) -> bool {
 /// Applies a lighter cycle (deload):
 /// Cuts each session's set count by 40-50% (floor 1).
 /// Suspends the 2-set block minimum.
+/// Idempotent: If plan.is_deload is already true, returns plan unchanged.
 pub fn apply_deload(plan: &Plan) -> Plan {
+    if plan.is_deload {
+        return plan.clone();
+    }
+
     let mut deload_plan = plan.clone();
+    deload_plan.pre_deload_sessions = Some(plan.sessions.clone());
+    deload_plan.is_deload = true;
+
     for session in &mut deload_plan.sessions {
         let original_total: u32 = session.blocks.iter().map(|b| b.sets).sum();
         let target_total = ((original_total as f64) * 0.5).round().max(1.0) as u32;
@@ -161,6 +272,17 @@ pub fn apply_deload(plan: &Plan) -> Plan {
         }
     }
     deload_plan
+}
+
+/// Restores a plan from a lighter cycle (deload) back to full volume.
+pub fn restore_from_deload(plan: &Plan) -> Plan {
+    let mut restored = plan.clone();
+    if let Some(saved_sessions) = &plan.pre_deload_sessions {
+        restored.sessions = saved_sessions.clone();
+    }
+    restored.is_deload = false;
+    restored.pre_deload_sessions = None;
+    restored
 }
 
 /// Converts kg into water bottle units:
@@ -259,6 +381,8 @@ mod tests {
             maintenance_deficits: std::collections::HashMap::new(),
             cumulative_effective_sets: std::collections::HashMap::new(),
             maintenance_dropped: false,
+            is_deload: false,
+            pre_deload_sessions: None,
         };
 
         let deloaded = apply_deload(&plan);
@@ -316,9 +440,11 @@ mod tests {
             },
         ];
         let settings = Settings::default();
-        let suggestion = evaluate_progression(&block, &exercise, &logs, &settings);
+        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings);
         assert!(suggestion.is_some());
         let s = suggestion.unwrap();
+        assert_eq!(s.session_number, 1);
+        assert_eq!(s.block_index, 0);
         assert_eq!(s.action, "intensify_execution");
         assert_eq!(s.next_exercise_id, Some("feet_elevated_push_up".to_string()));
     }

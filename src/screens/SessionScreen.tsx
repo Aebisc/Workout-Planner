@@ -65,7 +65,10 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
   const [sessionCompletedSummary, setSessionCompletedSummary] = useState<{
     completedSession: CompletedSession;
     suggestions: ProgressionSuggestion[];
+    deloadCycleCompleted: boolean;
   } | null>(null);
+  const [appliedSuggestions, setAppliedSuggestions] = useState<Record<string, boolean>>({});
+  const [restoredDeload, setRestoredDeload] = useState<boolean>(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -206,7 +209,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
         exercises_summary: exercisesSummary,
       };
 
-      const suggestions = await api.completeSession(completedSession, allLoggedSets);
+      const response = await api.completeSession(completedSession, allLoggedSets);
 
       try {
         sessionStorage.removeItem(`mgp_active_session_${session.session_number}`);
@@ -217,12 +220,45 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
 
       setSessionCompletedSummary({
         completedSession,
-        suggestions,
+        suggestions: response.suggestions,
+        deloadCycleCompleted: response.deload_cycle_completed,
       });
     } catch (err) {
       alert(`Failed to save session: ${err}`);
     } finally {
       setSubmittingSession(false);
+    }
+  };
+
+  const handleApplyProgression = async (
+    sugg: ProgressionSuggestion,
+    params: {
+      newExerciseId?: string | null;
+      newAddedWeightKg?: number | null;
+      newTempoCue?: string | null;
+    },
+    actionKey: string
+  ) => {
+    try {
+      await api.applyProgression({
+        sessionNumber: sugg.session_number,
+        blockIndex: sugg.block_index,
+        ...params,
+      });
+      setAppliedSuggestions((prev) => ({ ...prev, [actionKey]: true }));
+      loadData();
+    } catch (err) {
+      alert(`Failed to apply progression: ${err}`);
+    }
+  };
+
+  const handleRestoreDeload = async () => {
+    try {
+      await api.restoreDeloadPlan();
+      setRestoredDeload(true);
+      loadData();
+    } catch (err) {
+      alert(`Failed to restore deload plan: ${err}`);
     }
   };
 
@@ -585,14 +621,181 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
               </div>
             </div>
 
+            {/* Deload Cycle Completion Prompt */}
+            {sessionCompletedSummary.deloadCycleCompleted && (
+              <div className="card mb-4 deload-complete-card">
+                <div className="deload-complete-header">
+                  <span className="deload-icon">🌿</span>
+                  <div>
+                    <h4>Lighter Cycle (Deload) Complete!</h4>
+                    <p className="deload-complete-desc">
+                      You've completed all scheduled sessions for your lighter deload cycle. Ready to restore your full training volume for the next cycle?
+                    </p>
+                  </div>
+                </div>
+                {restoredDeload ? (
+                  <div className="badge badge-success p-2 text-center w-full mt-2">
+                    ✓ Full Volume Plan Restored!
+                  </div>
+                ) : (
+                  <button
+                    className="btn btn-primary btn-sm mt-3"
+                    onClick={handleRestoreDeload}
+                  >
+                    ⚡ Restore Full Volume Plan
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Structured Progression Suggestions */}
             {sessionCompletedSummary.suggestions.length > 0 && (
-              <div className="alert alert-info text-left mb-4">
-                <strong>💡 Progression Guidance:</strong>
-                <ul className="mt-2 mb-0 pl-4">
-                  {sessionCompletedSummary.suggestions.map((sugg, sIdx) => (
-                    <li key={sIdx}>{sugg.message}</li>
-                  ))}
-                </ul>
+              <div className="progression-suggestions-section mb-4">
+                <h4 className="section-title text-left mb-2">💡 Progression & Stall Guidance</h4>
+                <div className="suggestions-cards-list">
+                  {sessionCompletedSummary.suggestions.map((sugg, sIdx) => {
+                    const exName = exercises[sugg.exercise_id]?.name || sugg.exercise_id.replace(/_/g, ' ');
+                    const isStall = sugg.action === 'stall_detected';
+                    const tempoKey = `${sugg.block_index}-${sugg.action}-tempo`;
+                    const advanceKey = `${sugg.block_index}-${sugg.action}-advance`;
+                    const backpackKey = `${sugg.block_index}-${sugg.action}-backpack`;
+
+                    return (
+                      <div
+                        key={sIdx}
+                        className={`card suggestion-card ${isStall ? 'stall-suggestion-card' : ''}`}
+                      >
+                        <div className="suggestion-card-header">
+                          <strong>{exName}</strong>
+                          {isStall ? (
+                            <span className="badge badge-warning">⚠️ Stall Detected (3 Sessions)</span>
+                          ) : (
+                            <span className="badge badge-info">{sugg.action.replace(/_/g, ' ')}</span>
+                          )}
+                        </div>
+                        <p className="suggestion-message">{sugg.message}</p>
+
+                        <div className="suggestion-actions-row">
+                          {sugg.action === 'intensify_execution' && (
+                            <>
+                              {appliedSuggestions[tempoKey] ? (
+                                <span className="badge badge-success">✓ Applied Tempo Cue</span>
+                              ) : (
+                                <button
+                                  className="btn btn-outline btn-sm"
+                                  onClick={() =>
+                                    handleApplyProgression(
+                                      sugg,
+                                      { newTempoCue: sugg.new_tempo_cue },
+                                      tempoKey
+                                    )
+                                  }
+                                >
+                                  ⏱ Apply 3–4s Tempo & Pause Cue
+                                </button>
+                              )}
+                              {sugg.next_exercise_id && (
+                                appliedSuggestions[advanceKey] ? (
+                                  <span className="badge badge-success">✓ Advanced Variation</span>
+                                ) : (
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    onClick={() =>
+                                      handleApplyProgression(
+                                        sugg,
+                                        { newExerciseId: sugg.next_exercise_id },
+                                        advanceKey
+                                      )
+                                    }
+                                  >
+                                    ⬆ Advance to {sugg.next_exercise_id.replace(/_/g, ' ')}
+                                  </button>
+                                )
+                              )}
+                            </>
+                          )}
+
+                          {sugg.action === 'advance_variation' && sugg.next_exercise_id && (
+                            appliedSuggestions[advanceKey] ? (
+                              <span className="badge badge-success">✓ Advanced Variation</span>
+                            ) : (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() =>
+                                  handleApplyProgression(
+                                    sugg,
+                                    { newExerciseId: sugg.next_exercise_id },
+                                    advanceKey
+                                  )
+                                }
+                              >
+                                ⬆ Advance to {sugg.next_exercise_id.replace(/_/g, ' ')}
+                              </button>
+                            )
+                          )}
+
+                          {sugg.action === 'add_backpack_weight' && sugg.new_added_weight_kg !== null && (
+                            appliedSuggestions[backpackKey] ? (
+                              <span className="badge badge-success">✓ Added Weight</span>
+                            ) : (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() =>
+                                  handleApplyProgression(
+                                    sugg,
+                                    { newAddedWeightKg: sugg.new_added_weight_kg },
+                                    backpackKey
+                                  )
+                                }
+                              >
+                                🎒 Add Backpack Load (+1.5 kg)
+                              </button>
+                            )
+                          )}
+
+                          {sugg.action === 'stall_detected' && (
+                            <>
+                              {appliedSuggestions[tempoKey] ? (
+                                <span className="badge badge-success">✓ Applied Intensifier Cue</span>
+                              ) : (
+                                <button
+                                  className="btn btn-outline btn-sm"
+                                  onClick={() =>
+                                    handleApplyProgression(
+                                      sugg,
+                                      { newTempoCue: sugg.new_tempo_cue },
+                                      tempoKey
+                                    )
+                                  }
+                                >
+                                  ⏱ Apply Intensifier Cue
+                                </button>
+                              )}
+                              {sugg.next_exercise_id && (
+                                appliedSuggestions[advanceKey] ? (
+                                  <span className="badge badge-success">✓ Swapped Exercise</span>
+                                ) : (
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() =>
+                                      handleApplyProgression(
+                                        sugg,
+                                        { newExerciseId: sugg.next_exercise_id },
+                                        advanceKey
+                                      )
+                                    }
+                                  >
+                                    🔄 Swap to {sugg.next_exercise_id.replace(/_/g, ' ')}
+                                  </button>
+                                )
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 

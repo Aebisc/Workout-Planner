@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import { CycleCalibrationModal } from '../components/CycleCalibrationModal';
+import { EditSessionModal } from '../components/EditSessionModal';
 import { CompletedSession, Plan, Settings } from '../types';
 
 interface PlanOverviewScreenProps {
@@ -25,11 +27,37 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
   onOpenSettings,
 }) => {
   const [regenerating, setRegenerating] = useState(false);
+  const [restoringDeload, setRestoringDeload] = useState(false);
   const [history, setHistory] = useState<CompletedSession[]>([]);
+  const [calibrationModalOpen, setCalibrationModalOpen] = useState(false);
+  const [editSessionModal, setEditSessionModal] = useState<{
+    isOpen: boolean;
+    sessionToEdit: CompletedSession | null;
+    initialDate?: string;
+    initialSessionNumber?: number;
+  }>({
+    isOpen: false,
+    sessionToEdit: null,
+  });
+  const [anchorKey, setAnchorKey] = useState<string>(() => {
+    return localStorage.getItem('mgp_cycle_anchor_date') || '';
+  });
 
   useEffect(() => {
     api.getSessionHistory().then(setHistory).catch(console.error);
   }, [plan]);
+
+  const handleRestoreDeload = async () => {
+    setRestoringDeload(true);
+    try {
+      await api.restoreDeloadPlan();
+      onRefreshPlan();
+    } catch (err) {
+      alert(`Failed to restore deload: ${err}`);
+    } finally {
+      setRestoringDeload(false);
+    }
+  };
 
   const handleRegenerate = async () => {
     setRegenerating(true);
@@ -37,7 +65,9 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
       await api.generatePlan();
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      localStorage.setItem('mgp_cycle_anchor_date', toLocalDateKey(today));
+      const newKey = toLocalDateKey(today);
+      localStorage.setItem('mgp_cycle_anchor_date', newKey);
+      setAnchorKey(newKey);
       onRefreshPlan();
     } catch (err) {
       alert(`Regeneration failed: ${err}`);
@@ -68,22 +98,22 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
   });
 
   // Cycle Anchor Date & Dynamic Rest Day Positioning
-  let anchorKey = localStorage.getItem('mgp_cycle_anchor_date');
-  if (!anchorKey) {
+  let effectiveAnchorKey = anchorKey || localStorage.getItem('mgp_cycle_anchor_date');
+  if (!effectiveAnchorKey) {
     if (history.length > 0) {
       const earliestTs = Math.min(...history.map((s) => s.timestamp));
       const d = new Date(earliestTs);
       d.setHours(0, 0, 0, 0);
-      anchorKey = toLocalDateKey(d);
+      effectiveAnchorKey = toLocalDateKey(d);
     } else {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      anchorKey = toLocalDateKey(today);
+      effectiveAnchorKey = toLocalDateKey(today);
     }
-    localStorage.setItem('mgp_cycle_anchor_date', anchorKey);
+    localStorage.setItem('mgp_cycle_anchor_date', effectiveAnchorKey);
   }
 
-  const [aY, aM, aD] = anchorKey.split('-').map(Number);
+  const [aY, aM, aD] = effectiveAnchorKey.split('-').map(Number);
   const anchorMidnight = new Date(aY, aM - 1, aD, 0, 0, 0, 0);
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
@@ -118,6 +148,7 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
     let tooltip = '';
     let clickable = false;
     let sessionNumber: number | undefined;
+    let completedSession: CompletedSession | null = null;
 
     // Track consistency for past & today days on or after anchor
     if (diffDays >= 0 && offset <= 0 && (scheduledSession !== null || completedOnDate.length > 0)) {
@@ -129,10 +160,13 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
 
     if (completedOnDate.length > 0) {
       // Case A: User completed a workout on this day
+      completedSession = completedOnDate[0];
       circleClass = 'icon-done';
       icon = '✓';
       label = `S${completedOnDate[0].session_number}`;
-      tooltip = `${dateLabel}: Session ${completedOnDate[0].session_number} completed (${completedOnDate[0].total_sets} sets)`;
+      tooltip = `${dateLabel}: Session ${completedOnDate[0].session_number} completed (${completedOnDate[0].total_sets} sets) — Click to view/edit numbers`;
+      clickable = true;
+      sessionNumber = completedOnDate[0].session_number;
     } else if (scheduledSession === null) {
       // Case B: Scheduled Rest Day
       circleClass = 'icon-rest';
@@ -150,7 +184,9 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
         circleClass = 'icon-missed';
         icon = '✕';
         label = 'Miss';
-        tooltip = `${dateLabel}: Missed Session ${scheduledSession.session_number}`;
+        tooltip = `${dateLabel}: Missed Session ${scheduledSession.session_number} — Click to log workout numbers`;
+        clickable = true;
+        sessionNumber = scheduledSession.session_number;
       }
     } else if (offset === 0) {
       // Case D: Today — Workout Due
@@ -179,6 +215,7 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
       tooltip,
       clickable,
       sessionNumber,
+      completedSession,
     };
   });
 
@@ -228,6 +265,26 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
         </div>
       </div>
 
+      {plan.is_deload && (
+        <div className="card active-deload-banner mb-4">
+          <div className="active-deload-content">
+            <div className="active-deload-title-row">
+              <span className="badge badge-success">🌿 Active Lighter Cycle (Deload Mode — 50% Volume)</span>
+            </div>
+            <p className="active-deload-desc">
+              Session set counts are halved to let cumulative fatigue dissipate while preserving movement patterns.
+            </p>
+          </div>
+          <button
+            className="btn btn-primary btn-sm btn-restore-deload"
+            disabled={restoringDeload}
+            onClick={handleRestoreDeload}
+          >
+            {restoringDeload ? 'Restoring...' : '⚡ Restore Full Volume'}
+          </button>
+        </div>
+      )}
+
       {plan.cycle.is_adjusted && plan.cycle.adjusted_message && (
         <div className="alert alert-info">
           ℹ <strong>Cycle Snapping Note:</strong> {plan.cycle.adjusted_message}
@@ -246,6 +303,21 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
           <div className="cal-header-title">
             <span>⚡ 14-Day Cycle Adherence</span>
             <span className="badge badge-primary">{consistencyLabel}</span>
+            <button
+              className="btn-cal-adjust"
+              title="Recalibrate Cycle Start Date"
+              aria-label="Recalibrate Cycle Start Date"
+              onClick={() => setCalibrationModalOpen(true)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+                <circle cx="17.5" cy="17.5" r="2.5" />
+                <path d="M17.5 14v1M17.5 20v1M14 17.5h1M20 17.5h1" />
+              </svg>
+            </button>
           </div>
           <div className="cal-legend">
             <span><span className="legend-dot dot-done" />Trained (✓)</span>
@@ -262,8 +334,22 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
               className={`opt3-node ${day.isToday ? 'today-node' : ''} ${day.clickable ? 'clickable-node' : ''}`}
               title={day.tooltip}
               onClick={() => {
-                if (day.clickable && day.sessionNumber) {
+                if (day.isToday && day.clickable && day.sessionNumber) {
                   onSelectSession(day.sessionNumber);
+                } else if (day.completedSession) {
+                  setEditSessionModal({
+                    isOpen: true,
+                    sessionToEdit: day.completedSession,
+                    initialDate: day.dateKey,
+                    initialSessionNumber: day.sessionNumber,
+                  });
+                } else if (day.clickable && day.sessionNumber) {
+                  setEditSessionModal({
+                    isOpen: true,
+                    sessionToEdit: null,
+                    initialDate: day.dateKey,
+                    initialSessionNumber: day.sessionNumber,
+                  });
                 }
               }}
             >
@@ -379,6 +465,39 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
           </div>
         </div>
       )}
+
+      <CycleCalibrationModal
+        isOpen={calibrationModalOpen}
+        onClose={() => setCalibrationModalOpen(false)}
+        plan={plan}
+        currentAnchorDate={effectiveAnchorKey}
+        history={history}
+        onSaveAnchorDate={(newDate) => {
+          localStorage.setItem('mgp_cycle_anchor_date', newDate);
+          setAnchorKey(newDate);
+        }}
+        onOpenEditSession={(sess, dateKey, sNum) => {
+          setCalibrationModalOpen(false);
+          setEditSessionModal({
+            isOpen: true,
+            sessionToEdit: sess,
+            initialDate: dateKey,
+            initialSessionNumber: sNum,
+          });
+        }}
+      />
+
+      <EditSessionModal
+        isOpen={editSessionModal.isOpen}
+        onClose={() => setEditSessionModal({ isOpen: false, sessionToEdit: null })}
+        sessionToEdit={editSessionModal.sessionToEdit}
+        initialDate={editSessionModal.initialDate}
+        initialSessionNumber={editSessionModal.initialSessionNumber}
+        plan={plan}
+        onSaved={() => {
+          api.getSessionHistory().then(setHistory).catch(console.error);
+        }}
+      />
     </div>
   );
 };

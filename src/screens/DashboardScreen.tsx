@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import { EditSessionModal } from '../components/EditSessionModal';
 import { CompletedSession, Exercise, Muscle, Plan, Settings, Warning } from '../types';
 import { formatWeight } from '../utils/units';
 
@@ -21,8 +22,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [confirmingDeload, setConfirmingDeload] = useState<boolean>(false);
   const [deloadSuccess, setDeloadSuccess] = useState<string | null>(null);
   const [deloadLoading, setDeloadLoading] = useState<boolean>(false);
+  const [editingSession, setEditingSession] = useState<CompletedSession | null>(null);
 
-  useEffect(() => {
+  const loadDashboardData = () => {
     Promise.all([api.getWarnings(), api.getExercises(), api.getSessionHistory()])
       .then(([w, ex, history]) => {
         setWarnings(w);
@@ -30,6 +32,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         setSessionHistory(history);
       })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadDashboardData();
   }, [plan]);
 
   const handleTriggerDeload = async () => {
@@ -41,6 +47,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       setDeloadSuccess('Lighter cycle (deload) applied successfully! All session set counts are halved for this cycle.');
     } catch (err) {
       alert(`Failed to trigger deload: ${err}`);
+    } finally {
+      setDeloadLoading(false);
+    }
+  };
+
+  const handleRestoreDeload = async () => {
+    setDeloadLoading(true);
+    try {
+      await api.restoreDeloadPlan();
+      await onPlanUpdated();
+      setDeloadSuccess('Full volume restored! All session set counts have been restored to pre-deload levels.');
+    } catch (err) {
+      alert(`Failed to restore full volume: ${err}`);
     } finally {
       setDeloadLoading(false);
     }
@@ -206,49 +225,72 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
       {/* Deload Card */}
       <div className="card mt-4">
-        <div className="overview-header">
-          <div>
-            <h3>Recovery & Deload (Lighter Cycle)</h3>
-            <p className="subtitle mb-0">
-              Every 6–8 weeks or after periods of high fatigue, run a lighter cycle. Cuts session set count by 50% (floor 1) and suspends block size minimums for one cycle.
-            </p>
-          </div>
-          {!confirmingDeload && (
-            <button
-              className="btn btn-secondary mt-2"
-              onClick={() => {
-                setDeloadSuccess(null);
-                setConfirmingDeload(true);
-              }}
-            >
-              🌙 Trigger Lighter Cycle (Deload)
-            </button>
-          )}
-        </div>
-
-        {confirmingDeload && (
-          <div className="deload-confirm-box">
-            <p><strong>Apply a lighter deload cycle?</strong></p>
-            <p className="help-text">
-              This cuts set counts by 50% (floor of 1) across all sessions for the upcoming cycle to allow fatigue to dissipate.
-            </p>
-            <div className="deload-confirm-actions">
-              <button
-                className="btn btn-warning btn-sm"
-                disabled={deloadLoading}
-                onClick={handleTriggerDeload}
-              >
-                {deloadLoading ? 'Applying...' : '✓ Yes, Apply Deload'}
-              </button>
-              <button
-                className="btn btn-outline btn-sm"
-                disabled={deloadLoading}
-                onClick={() => setConfirmingDeload(false)}
-              >
-                Cancel
-              </button>
+        {plan?.is_deload ? (
+          <div className="overview-header">
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <h3 className="mb-0">Recovery & Deload (Lighter Cycle)</h3>
+                <span className="badge badge-success">Active Deload Cycle</span>
+              </div>
+              <p className="subtitle mb-0 mt-1">
+                Set volume is currently reduced by 50% for fatigue recovery. You can restore full volume at any time once you feel refreshed.
+              </p>
             </div>
+            <button
+              className="btn btn-primary mt-2"
+              disabled={deloadLoading}
+              onClick={handleRestoreDeload}
+            >
+              {deloadLoading ? 'Restoring...' : '⚡ End Deload & Restore Full Volume'}
+            </button>
           </div>
+        ) : (
+          <>
+            <div className="overview-header">
+              <div>
+                <h3>Recovery & Deload (Lighter Cycle)</h3>
+                <p className="subtitle mb-0">
+                  Every 6–8 weeks or after periods of high fatigue, run a lighter cycle. Cuts session set count by 50% (floor 1) and suspends block size minimums for one cycle.
+                </p>
+              </div>
+              {!confirmingDeload && (
+                <button
+                  className="btn btn-secondary mt-2"
+                  onClick={() => {
+                    setDeloadSuccess(null);
+                    setConfirmingDeload(true);
+                  }}
+                >
+                  🌙 Trigger Lighter Cycle (Deload)
+                </button>
+              )}
+            </div>
+
+            {confirmingDeload && (
+              <div className="deload-confirm-box">
+                <p><strong>Apply a lighter deload cycle?</strong></p>
+                <p className="help-text">
+                  This cuts set counts by 50% (floor of 1) across all sessions for the upcoming cycle to allow fatigue to dissipate.
+                </p>
+                <div className="deload-confirm-actions">
+                  <button
+                    className="btn btn-warning btn-sm"
+                    disabled={deloadLoading}
+                    onClick={handleTriggerDeload}
+                  >
+                    {deloadLoading ? 'Applying...' : '✓ Yes, Apply Deload'}
+                  </button>
+                  <button
+                    className="btn btn-outline btn-sm"
+                    disabled={deloadLoading}
+                    onClick={() => setConfirmingDeload(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {deloadSuccess && (
@@ -333,6 +375,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         ))}
                       </div>
                       <span className="badge badge-primary">{s.total_sets} Sets Completed</span>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm ml-2"
+                        onClick={() => setEditingSession(s)}
+                        title="Modify accurate workout numbers"
+                      >
+                        ✏️ Modify Numbers
+                      </button>
                     </div>
                   </div>
 
@@ -367,6 +417,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </div>
         )}
       </div>
+
+      <EditSessionModal
+        isOpen={editingSession !== null}
+        onClose={() => setEditingSession(null)}
+        sessionToEdit={editingSession}
+        onSaved={loadDashboardData}
+      />
     </div>
   );
 };

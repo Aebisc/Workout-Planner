@@ -248,6 +248,10 @@ pub struct Plan {
     pub maintenance_deficits: HashMap<Muscle, f64>,
     pub cumulative_effective_sets: HashMap<Muscle, f64>,
     pub maintenance_dropped: bool,
+    #[serde(default)]
+    pub is_deload: bool,
+    #[serde(default)]
+    pub pre_deload_sessions: Option<Vec<Session>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -325,11 +329,20 @@ pub struct WarningTiersData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressionSuggestion {
+    pub session_number: u32,
+    pub block_index: usize,
     pub exercise_id: String,
     pub action: String,
     pub message: String,
     pub new_added_weight_kg: Option<f64>,
     pub next_exercise_id: Option<String>,
+    pub new_tempo_cue: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompleteSessionResponse {
+    pub suggestions: Vec<ProgressionSuggestion>,
+    pub deload_cycle_completed: bool,
 }
 
 #[cfg(test)]

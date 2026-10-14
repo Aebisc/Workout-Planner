@@ -1,5 +1,6 @@
 use crate::models::{
-    Exercise, ExperienceLevel, Muscle, Plan, Settings, Warning, WarningSeverity, WarningTiersData,
+    Exercise, ExperienceLevel, Muscle, Plan, SetLog, Settings, Warning, WarningSeverity,
+    WarningTiersData,
 };
 use std::collections::HashMap;
 
@@ -54,6 +55,17 @@ pub fn evaluate_plan_warnings(
     tiers_data: &WarningTiersData,
 ) -> Vec<Warning> {
     let mut warnings = Vec::new();
+
+    if plan.is_deload {
+        warnings.push(Warning {
+            code: "active_deload_cycle".to_string(),
+            muscle: None,
+            severity: WarningSeverity::Info,
+            message: "Active Lighter Cycle (Deload): Set volume is intentionally reduced by ~50% for fatigue dissipation. Low-volume warnings are paused until full volume is restored.".to_string(),
+            lower_evidence: false,
+        });
+    }
+
     let cycle_eff = effective_sets_per_cycle(plan, exercises_map);
     let weekly = weekly_effective_sets(&cycle_eff, plan.cycle.length_days);
 
@@ -77,47 +89,51 @@ pub fn evaluate_plan_warnings(
             .lower_evidence_muscles
             .contains(&muscle.as_str().to_string());
 
-        if weekly_sets < loss_threshold {
-            warnings.push(Warning {
-                code: "muscle_loss".to_string(),
-                muscle: Some(muscle),
-                severity: WarningSeverity::Alert,
-                message: format!(
-                    "{}: {:.1} sets/wk. Muscle loss risk. With almost no stimulus the muscle will shrink over several weeks.",
-                    muscle.as_str(),
-                    weekly_sets
-                ),
-                lower_evidence,
-            });
-        } else if weekly_sets < maint_threshold {
-            if is_priority {
+        if !plan.is_deload {
+            if weekly_sets < loss_threshold {
                 warnings.push(Warning {
-                    code: "priority_maintenance_only".to_string(),
+                    code: "muscle_loss".to_string(),
                     muscle: Some(muscle),
-                    severity: WarningSeverity::Warning,
+                    severity: WarningSeverity::Alert,
                     message: format!(
-                        "Priority {}: {:.1} sets/wk. Maintenance at best. Not enough volume to build more muscle.",
+                        "{}: {:.1} sets/wk. Muscle loss risk. With almost no stimulus the muscle will shrink over several weeks.",
                         muscle.as_str(),
                         weekly_sets
                     ),
                     lower_evidence,
                 });
+            } else if weekly_sets < maint_threshold {
+                if is_priority {
+                    warnings.push(Warning {
+                        code: "priority_maintenance_only".to_string(),
+                        muscle: Some(muscle),
+                        severity: WarningSeverity::Warning,
+                        message: format!(
+                            "Priority {}: {:.1} sets/wk. Maintenance at best. Not enough volume to build more muscle.",
+                            muscle.as_str(),
+                            weekly_sets
+                        ),
+                        lower_evidence,
+                    });
+                }
+            } else if weekly_sets < small_growth_threshold {
+                if is_priority {
+                    warnings.push(Warning {
+                        code: "small_growth".to_string(),
+                        muscle: Some(muscle),
+                        severity: WarningSeverity::Notice,
+                        message: format!(
+                            "Priority {}: {:.1} sets/wk. Small growth: below what research shows is achievable.",
+                            muscle.as_str(),
+                            weekly_sets
+                        ),
+                        lower_evidence,
+                    });
+                }
             }
-        } else if weekly_sets < small_growth_threshold {
-            if is_priority {
-                warnings.push(Warning {
-                    code: "small_growth".to_string(),
-                    muscle: Some(muscle),
-                    severity: WarningSeverity::Notice,
-                    message: format!(
-                        "Priority {}: {:.1} sets/wk. Small growth: below what research shows is achievable.",
-                        muscle.as_str(),
-                        weekly_sets
-                    ),
-                    lower_evidence,
-                });
-            }
-        } else if weekly_sets > diminishing_threshold {
+        }
+
+        if weekly_sets > diminishing_threshold {
             warnings.push(Warning {
                 code: "diminishing_returns".to_string(),
                 muscle: Some(muscle),
@@ -159,7 +175,7 @@ pub fn evaluate_plan_warnings(
     }
 
     // Check diluted plan: if chosen priority muscles each get under 10 weekly effective sets
-    if settings.priority_muscles.len() > 1 {
+    if !plan.is_deload && settings.priority_muscles.len() > 1 {
         let all_priority_under_optimal = settings.priority_muscles.iter().all(|m| {
             let sets = weekly.get(m).copied().unwrap_or(0.0);
             sets < small_growth_threshold
@@ -176,19 +192,21 @@ pub fn evaluate_plan_warnings(
     }
 
     // Check insufficient budget: if total capacity projects to under 5 weekly effective sets (or threshold)
-    let max_weekly = weekly.values().cloned().fold(0.0_f64, f64::max);
-    if max_weekly < tiers_data.rules.insufficient_budget_threshold {
-        warnings.push(Warning {
-            code: "insufficient_budget".to_string(),
-            muscle: None,
-            severity: WarningSeverity::Alert,
-            message: format!(
-                "Total training capacity is too low ({:.1} sets/wk max). No muscle can reach even the small-growth tier (≥{:.1} sets/wk). Consider increasing sets per day or days per week.",
-                max_weekly,
-                tiers_data.rules.insufficient_budget_threshold
-            ),
-            lower_evidence: false,
-        });
+    if !plan.is_deload {
+        let max_weekly = weekly.values().cloned().fold(0.0_f64, f64::max);
+        if max_weekly < tiers_data.rules.insufficient_budget_threshold {
+            warnings.push(Warning {
+                code: "insufficient_budget".to_string(),
+                muscle: None,
+                severity: WarningSeverity::Alert,
+                message: format!(
+                    "Total training capacity is too low ({:.1} sets/wk max). No muscle can reach even the small-growth tier (≥{:.1} sets/wk). Consider increasing sets per day or days per week.",
+                    max_weekly,
+                    tiers_data.rules.insufficient_budget_threshold
+                ),
+                lower_evidence: false,
+            });
+        }
     }
 
     // Check maintenance dropped flag
@@ -200,6 +218,39 @@ pub fn evaluate_plan_warnings(
             message: "Direct maintenance for non-priority muscles was omitted because it exceeded 50% of your cycle set budget.".to_string(),
             lower_evidence: false,
         });
+    }
+
+    warnings
+}
+
+/// Evaluates stall warnings for currently scheduled exercises across historical set logs.
+pub fn evaluate_stall_warnings(
+    plan: &Plan,
+    exercises_map: &HashMap<String, Exercise>,
+    all_logs: &[SetLog],
+) -> Vec<Warning> {
+    let mut warnings = Vec::new();
+    let mut checked_exercises = std::collections::HashSet::new();
+
+    for session in &plan.sessions {
+        for block in &session.blocks {
+            if checked_exercises.insert(&block.exercise_id) {
+                if let Some(ex) = exercises_map.get(&block.exercise_id) {
+                    if crate::progression::detect_stall_from_all_logs(&ex.id, all_logs) {
+                        warnings.push(Warning {
+                            code: "exercise_stall".to_string(),
+                            muscle: Some(ex.primary_muscle),
+                            severity: WarningSeverity::Warning,
+                            message: format!(
+                                "{} has stalled for 3 consecutive exposures without rep or load progress. Consider applying execution intensifiers, swapping variations, or triggering a deload cycle.",
+                                ex.name
+                            ),
+                            lower_evidence: false,
+                        });
+                    }
+                }
+            }
+        }
     }
 
     warnings
@@ -282,6 +333,8 @@ mod tests {
             maintenance_deficits: HashMap::new(),
             cumulative_effective_sets: HashMap::new(),
             maintenance_dropped: false,
+            is_deload: false,
+            pre_deload_sessions: None,
         };
 
         let tiers = WarningTiersData {
@@ -341,6 +394,8 @@ mod tests {
             maintenance_deficits: HashMap::new(),
             cumulative_effective_sets: HashMap::new(),
             maintenance_dropped: false,
+            is_deload: false,
+            pre_deload_sessions: None,
         };
 
         let tiers = WarningTiersData {

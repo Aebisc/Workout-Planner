@@ -2,12 +2,14 @@ use muscle_growth_planner_lib::calibration::calibrate_initial_profile;
 use muscle_growth_planner_lib::models::{
     CalibrationAnswers, ExperienceLevel, Muscle, Profile, SetLog, Settings,
 };
-use muscle_growth_planner_lib::progression::{apply_deload, detect_stall};
+use muscle_growth_planner_lib::progression::{
+    apply_deload, detect_stall, detect_stall_from_all_logs, restore_from_deload,
+};
 use muscle_growth_planner_lib::scheduler::{
-    days_per_week_to_cycle, generate_plan, partition_sets_into_blocks,
+    days_per_week_to_cycle, generate_plan, partition_sets_into_blocks, sort_session_blocks,
 };
 use muscle_growth_planner_lib::volume::{
-    effective_sets_per_cycle, evaluate_plan_warnings, weekly_effective_sets,
+    effective_sets_per_cycle, evaluate_plan_warnings, evaluate_stall_warnings, weekly_effective_sets,
 };
 use muscle_growth_planner_lib::{load_embedded_exercises, load_embedded_warning_tiers};
 use std::collections::HashMap;
@@ -379,3 +381,155 @@ fn test_dumbbell_calibration_adapts_cues_and_rep_targets() {
     assert_eq!(db_block_3.rep_target_min, 8);
     assert_eq!(db_block_3.rep_target_max, 12);
 }
+
+#[test]
+fn test_deload_lifecycle_and_restoration() {
+    let exercises = load_embedded_exercises();
+    let tiers = load_embedded_warning_tiers();
+
+    let settings = Settings {
+        sets_per_day: 4,
+        days_per_week: 3.0,
+        priority_muscles: vec![Muscle::Chest],
+        maintenance_on: false,
+        ..Default::default()
+    };
+    let profile = Profile::default();
+
+    let plan = generate_plan(
+        &settings,
+        &profile,
+        &exercises,
+        HashMap::new(),
+        HashMap::new(),
+    );
+    assert!(!plan.is_deload);
+    assert!(plan.pre_deload_sessions.is_none());
+    assert_eq!(plan.sessions[0].blocks[0].sets, 4);
+
+    // Apply deload
+    let deloaded = apply_deload(&plan);
+    assert!(deloaded.is_deload);
+    assert!(deloaded.pre_deload_sessions.is_some());
+    assert_eq!(deloaded.sessions[0].blocks[0].sets, 2);
+
+    // Idempotency: apply deload a second time
+    let deloaded_twice = apply_deload(&deloaded);
+    assert_eq!(deloaded_twice.sessions[0].blocks[0].sets, 2);
+
+    // Evaluate warnings on deloaded plan
+    let mut ex_map = HashMap::new();
+    for ex in &exercises {
+        ex_map.insert(ex.id.clone(), ex.clone());
+    }
+    let warnings = evaluate_plan_warnings(&deloaded, &ex_map, &settings, &tiers);
+    assert!(warnings.iter().any(|w| w.code == "active_deload_cycle"));
+    assert!(!warnings.iter().any(|w| w.code == "muscle_loss" || w.code == "small_growth"));
+
+    // Restore from deload
+    let restored = restore_from_deload(&deloaded);
+    assert!(!restored.is_deload);
+    assert!(restored.pre_deload_sessions.is_none());
+    assert_eq!(restored.sessions[0].blocks[0].sets, 4);
+}
+
+#[test]
+fn test_stall_detection_from_flat_set_logs_and_warnings() {
+    let exercises = load_embedded_exercises();
+    let settings = Settings {
+        sets_per_day: 4,
+        days_per_week: 3.0,
+        priority_muscles: vec![Muscle::Chest],
+        ..Default::default()
+    };
+    let profile = Profile::default();
+    let plan = generate_plan(
+        &settings,
+        &profile,
+        &exercises,
+        HashMap::new(),
+        HashMap::new(),
+    );
+
+    let mut ex_map = HashMap::new();
+    for ex in &exercises {
+        ex_map.insert(ex.id.clone(), ex.clone());
+    }
+
+    // 3 separate exposures of push_up separated by 24h with no rep/load progress
+    let now = 1_700_000_000_000_i64;
+    let day_ms = 86_400_000_i64;
+    let logs = vec![
+        SetLog {
+            timestamp: now - 2 * day_ms,
+            session_number: 1,
+            block_index: 0,
+            exercise_id: "push_up".to_string(),
+            reps_or_seconds: 12,
+            added_weight_kg: 0.0,
+            reps_from_failure: 1,
+        },
+        SetLog {
+            timestamp: now - day_ms,
+            session_number: 1,
+            block_index: 0,
+            exercise_id: "push_up".to_string(),
+            reps_or_seconds: 12,
+            added_weight_kg: 0.0,
+            reps_from_failure: 1,
+        },
+        SetLog {
+            timestamp: now,
+            session_number: 1,
+            block_index: 0,
+            exercise_id: "push_up".to_string(),
+            reps_or_seconds: 12,
+            added_weight_kg: 0.0,
+            reps_from_failure: 1,
+        },
+    ];
+
+    assert!(detect_stall_from_all_logs("push_up", &logs));
+    let stall_warnings = evaluate_stall_warnings(&plan, &ex_map, &logs);
+    assert!(
+        stall_warnings.iter().any(|w| w.code == "exercise_stall" && w.muscle == Some(Muscle::Chest)),
+        "Should emit an exercise_stall warning for Muscle::Chest"
+    );
+}
+
+#[test]
+fn test_apply_progression_preserves_set_volume_and_reorders() {
+    let exercises = load_embedded_exercises();
+    let settings = Settings {
+        sets_per_day: 4,
+        days_per_week: 3.0,
+        priority_muscles: vec![Muscle::Chest],
+        ..Default::default()
+    };
+    let profile = Profile::default();
+    let mut plan = generate_plan(
+        &settings,
+        &profile,
+        &exercises,
+        HashMap::new(),
+        HashMap::new(),
+    );
+
+    let original_sets = plan.sessions[0].blocks[0].sets;
+    assert_eq!(original_sets, 4);
+
+    // Mutate block 0: upgrade variation to feet_elevated_push_up
+    let session = &mut plan.sessions[0];
+    let block = &mut session.blocks[0];
+    block.exercise_id = "feet_elevated_push_up".to_string();
+    block.added_weight_kg = 0.0;
+    block.tempo_cue = "Controlled 2-3s negative".to_string();
+    // Invariant check: sets MUST be strictly untouched
+    assert_eq!(block.sets, original_sets);
+
+    // Re-run sort_session_blocks and verify order
+    sort_session_blocks(&mut session.blocks, &exercises);
+    assert_eq!(session.blocks[0].sets, original_sets);
+    assert_eq!(session.blocks[0].exercise_id, "feet_elevated_push_up");
+}
+

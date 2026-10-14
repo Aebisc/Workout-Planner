@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
   CalibrationAnswers,
+  CompleteSessionResponse,
   CompletedSession,
   Exercise,
   Plan,
@@ -45,7 +46,17 @@ export const api = {
     invoke<ProgressionSuggestion | null>('log_set', { log }),
 
   completeSession: (session: CompletedSession, sets: SetLog[]) =>
-    invoke<ProgressionSuggestion[]>('complete_session', { session, sets }),
+    invoke<CompleteSessionResponse>('complete_session', { session, sets }),
+
+  applyProgression: (params: {
+    sessionNumber: number;
+    blockIndex: number;
+    newExerciseId?: string | null;
+    newAddedWeightKg?: number | null;
+    newTempoCue?: string | null;
+  }) => invoke<Plan>('apply_progression', params),
+
+  restoreDeloadPlan: () => invoke<Plan>('restore_deload_plan'),
 
   getSessionHistory: () =>
     invoke<CompletedSession[]>('get_session_history'),
@@ -60,4 +71,10 @@ export const api = {
 
   calibrateDumbbell: (reps: number) =>
     invoke<Profile>('calibrate_dumbbell', { reps }),
+
+  updateCompletedSession: (session: CompletedSession, sets: SetLog[]) =>
+    invoke<void>('update_completed_session', { session, sets }),
+
+  deleteCompletedSession: (id: string) =>
+    invoke<void>('delete_completed_session', { id }),
 };

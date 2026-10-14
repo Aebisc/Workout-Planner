@@ -107,6 +107,13 @@ impl StorageManager {
         fs::write(&path, json).map_err(|e| format!("Failed to write set log: {}", e))
     }
 
+    pub fn save_set_logs(&self, logs: &[SetLog]) -> Result<(), String> {
+        let path = self.set_log_path();
+        let json = serde_json::to_string_pretty(logs)
+            .map_err(|e| format!("Failed to serialize set logs: {}", e))?;
+        fs::write(&path, json).map_err(|e| format!("Failed to write set log: {}", e))
+    }
+
     pub fn load_session_history(&self) -> Result<Vec<CompletedSession>, String> {
         let path = self.session_history_path();
         if !path.exists() {
@@ -117,13 +124,17 @@ impl StorageManager {
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse session history: {}", e))
     }
 
+    pub fn save_session_history(&self, history: &[CompletedSession]) -> Result<(), String> {
+        let path = self.session_history_path();
+        let json = serde_json::to_string_pretty(history)
+            .map_err(|e| format!("Failed to serialize session history: {}", e))?;
+        fs::write(&path, json).map_err(|e| format!("Failed to write session history: {}", e))
+    }
+
     pub fn append_completed_session(&self, entry: &CompletedSession) -> Result<(), String> {
         let mut history = self.load_session_history()?;
         history.push(entry.clone());
-        let path = self.session_history_path();
-        let json = serde_json::to_string_pretty(&history)
-            .map_err(|e| format!("Failed to serialize session history: {}", e))?;
-        fs::write(&path, json).map_err(|e| format!("Failed to write session history: {}", e))
+        self.save_session_history(&history)
     }
 }
 
@@ -177,6 +188,8 @@ mod tests {
             maintenance_deficits: HashMap::new(),
             cumulative_effective_sets: HashMap::new(),
             maintenance_dropped: false,
+            is_deload: false,
+            pre_deload_sessions: None,
         };
         storage.save_plan(&plan).unwrap();
         let loaded_plan = storage.load_plan().unwrap().unwrap();

@@ -1,7 +1,7 @@
 use crate::calibration::calibrate_initial_profile;
 use crate::models::{
-    CalibrationAnswers, CompletedSession, Exercise, Plan, Profile, ProgressionSuggestion, Session,
-    SessionExerciseSummary, SetLog, Settings, Warning,
+    CalibrationAnswers, CompleteSessionResponse, CompletedSession, Exercise, Plan, Profile,
+    ProgressionSuggestion, Session, SessionExerciseSummary, SetLog, Settings, Warning,
 };
 use crate::progression::{evaluate_progression, update_profile_from_set};
 use crate::scheduler::generate_plan as sched_generate_plan;
@@ -322,7 +322,14 @@ pub fn log_set(
             })
             .collect();
 
-        let suggestion = evaluate_progression(blk, ex, &recent_exercise_logs, &settings);
+        let suggestion = evaluate_progression(
+            log.session_number,
+            log.block_index,
+            blk,
+            ex,
+            &recent_exercise_logs,
+            &settings,
+        );
         Ok(suggestion)
     } else {
         Ok(None)
@@ -341,7 +348,14 @@ pub fn get_warnings(app: tauri::AppHandle) -> Result<Vec<Warning>, String> {
             ex_map.insert(ex.id.clone(), ex);
         }
         let tiers = load_embedded_warning_tiers();
-        let warnings = evaluate_plan_warnings(&plan, &ex_map, &settings, &tiers);
+        let mut warnings = evaluate_plan_warnings(&plan, &ex_map, &settings, &tiers);
+
+        if !plan.is_deload {
+            let all_logs = storage.load_set_logs()?;
+            let stall_warnings = crate::volume::evaluate_stall_warnings(&plan, &ex_map, &all_logs);
+            warnings.extend(stall_warnings);
+        }
+
         Ok(warnings)
     } else {
         Ok(Vec::new())
@@ -372,11 +386,148 @@ pub fn trigger_deload(app: tauri::AppHandle) -> Result<Plan, String> {
 }
 
 #[tauri::command]
+pub fn restore_deload_plan(app: tauri::AppHandle) -> Result<Plan, String> {
+    let storage = get_storage(&app)?;
+    let plan = storage
+        .load_plan()?
+        .ok_or_else(|| "No active workout plan found to restore".to_string())?;
+
+    let restored = crate::progression::restore_from_deload(&plan);
+    storage.save_plan(&restored)?;
+    Ok(restored)
+}
+
+#[tauri::command]
+pub fn apply_progression(
+    app: tauri::AppHandle,
+    session_number: u32,
+    block_index: usize,
+    new_exercise_id: Option<String>,
+    new_added_weight_kg: Option<f64>,
+    new_tempo_cue: Option<String>,
+) -> Result<Plan, String> {
+    let storage = get_storage(&app)?;
+    let mut plan = storage
+        .load_plan()?
+        .ok_or_else(|| "No active plan found".to_string())?;
+
+    let exercises = load_embedded_exercises();
+
+    let mutate_block = |sess: &mut Session| -> Result<(), String> {
+        let block = sess
+            .blocks
+            .get_mut(block_index)
+            .ok_or_else(|| format!("Block index {} not found in session {}", block_index, sess.session_number))?;
+
+        // Invariant Check (§8): Never touch block.sets!
+        if let Some(w) = new_added_weight_kg {
+            block.added_weight_kg = w;
+            if block.seconds_target_min.is_none() {
+                block.rep_target_min = 8;
+                block.rep_target_max = 12;
+            }
+        }
+
+        if let Some(ref cue) = new_tempo_cue {
+            block.tempo_cue = cue.clone();
+        }
+
+        if let Some(ref ex_id) = new_exercise_id {
+            let new_ex = exercises
+                .iter()
+                .find(|e| e.id == *ex_id)
+                .ok_or_else(|| format!("Exercise {} not found in exercises library", ex_id))?;
+
+            block.exercise_id = new_ex.id.clone();
+            block.added_weight_kg = 0.0;
+            if new_ex.time_based {
+                block.rep_target_min = 0;
+                block.rep_target_max = 0;
+                block.seconds_target_min = Some(20);
+                block.seconds_target_max = Some(60);
+            } else {
+                block.rep_target_min = 8;
+                block.rep_target_max = 15;
+                block.seconds_target_min = None;
+                block.seconds_target_max = None;
+            }
+            block.effort_target = "0-3 reps from failure".to_string();
+            block.tempo_cue = "Controlled 2-3s negative".to_string();
+            block.rest_cue = match new_ex.ladder.as_str() {
+                "biceps"
+                | "triceps_stretch"
+                | "triceps_isolation"
+                | "forearms_isolation"
+                | "forearms_grip"
+                | "abs"
+                | "abs_floor" => "1-2 min between sets".to_string(),
+                _ => "2-3 min between sets".to_string(),
+            };
+
+            if new_ex.equipment.contains(&"dumbbell".to_string()) {
+                if let Ok(profile) = storage.load_profile() {
+                    if let Some(db_reps) = profile.dumbbell_calibrated_reps {
+                        if db_reps > 22 {
+                            block.tempo_cue = "Slow 3-4s lowering, pause in stretch, plus lengthened partials after failure".to_string();
+                            block.rep_target_min = 10;
+                            block.rep_target_max = 15;
+                        } else if db_reps > 15 {
+                            block.tempo_cue = "Slow 3-4s lowering with 1s pause in stretch".to_string();
+                            block.rep_target_min = 8;
+                            block.rep_target_max = 12;
+                        } else if db_reps < 8 {
+                            block.tempo_cue = "Controlled 2s negative, focus on form and control".to_string();
+                            block.rep_target_min = 6;
+                            block.rep_target_max = 10;
+                        } else {
+                            block.tempo_cue = "Standard controlled 2-3s negative".to_string();
+                            block.rep_target_min = 8;
+                            block.rep_target_max = 15;
+                        }
+                    }
+                }
+            }
+
+            // Universal Exercise Sequencing (§6.4)
+            crate::scheduler::sort_session_blocks(&mut sess.blocks, &exercises);
+            sess.focus.clear();
+            for b in &sess.blocks {
+                if let Some(e) = exercises.iter().find(|ex| ex.id == b.exercise_id) {
+                    if !sess.focus.contains(&e.primary_muscle) {
+                        sess.focus.push(e.primary_muscle);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    };
+
+    let session = plan
+        .sessions
+        .iter_mut()
+        .find(|s| s.session_number == session_number)
+        .ok_or_else(|| format!("Session {} not found", session_number))?;
+    mutate_block(session)?;
+
+    if plan.is_deload {
+        if let Some(ref mut pre_sessions) = plan.pre_deload_sessions {
+            if let Some(pre_sess) = pre_sessions.iter_mut().find(|s| s.session_number == session_number) {
+                mutate_block(pre_sess)?;
+            }
+        }
+    }
+
+    storage.save_plan(&plan)?;
+    Ok(plan)
+}
+
+#[tauri::command]
 pub fn complete_session(
     app: tauri::AppHandle,
     session: CompletedSession,
     sets: Vec<SetLog>,
-) -> Result<Vec<ProgressionSuggestion>, String> {
+) -> Result<CompleteSessionResponse, String> {
     let storage = get_storage(&app)?;
     storage.append_completed_session(&session)?;
 
@@ -389,6 +540,15 @@ pub fn complete_session(
     for set in &sets {
         storage.append_set_log(set)?;
         update_profile_from_set(&mut profile, set);
+    }
+
+    let all_logs = storage.load_set_logs()?;
+    let mut evaluated_blocks = std::collections::HashSet::new();
+
+    for set in &sets {
+        if !evaluated_blocks.insert((set.session_number, set.block_index)) {
+            continue;
+        }
 
         let exercise = exercises.iter().find(|e| e.id == set.exercise_id);
         let block = plan.as_ref().and_then(|p| {
@@ -405,8 +565,35 @@ pub fn complete_session(
                 .cloned()
                 .collect();
 
-            if let Some(sugg) = evaluate_progression(blk, ex, &current_block_sets, &settings) {
-                if !suggestions.iter().any(|s: &ProgressionSuggestion| s.exercise_id == sugg.exercise_id) {
+            let mut block_suggestion = evaluate_progression(
+                session.session_number,
+                set.block_index,
+                blk,
+                ex,
+                &current_block_sets,
+                &settings,
+            );
+
+            let is_deload = plan.as_ref().map(|p| p.is_deload).unwrap_or(false);
+            if !is_deload && crate::progression::detect_stall_from_all_logs(&ex.id, &all_logs) {
+                let next_ex = ex.harder_id.clone().or_else(|| ex.easier_id.clone());
+                block_suggestion = Some(ProgressionSuggestion {
+                    session_number: session.session_number,
+                    block_index: set.block_index,
+                    exercise_id: ex.id.clone(),
+                    action: "stall_detected".to_string(),
+                    message: format!(
+                        "{} has stalled for 3 consecutive exposures without rep or load progress. Consider applying execution intensifiers, swapping variations, or triggering a deload cycle.",
+                        ex.name
+                    ),
+                    new_added_weight_kg: None,
+                    next_exercise_id: next_ex,
+                    new_tempo_cue: Some("Slow 3-4s lowering, 1s pause at bottom".to_string()),
+                });
+            }
+
+            if let Some(sugg) = block_suggestion {
+                if !suggestions.iter().any(|s: &ProgressionSuggestion| s.exercise_id == sugg.exercise_id && s.block_index == sugg.block_index) {
                     suggestions.push(sugg);
                 }
             }
@@ -414,7 +601,22 @@ pub fn complete_session(
     }
 
     storage.save_profile(&profile)?;
-    Ok(suggestions)
+
+    let is_deload = plan.as_ref().map(|p| p.is_deload).unwrap_or(false);
+    let deload_cycle_completed = if is_deload {
+        if let Some(ref p) = plan {
+            session.session_number >= p.cycle.sessions_count
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    Ok(CompleteSessionResponse {
+        suggestions,
+        deload_cycle_completed,
+    })
 }
 
 #[tauri::command]
@@ -480,3 +682,64 @@ pub fn get_session_history(app: tauri::AppHandle) -> Result<Vec<CompletedSession
 
     Ok(history)
 }
+
+#[tauri::command]
+pub fn update_completed_session(
+    app: tauri::AppHandle,
+    session: CompletedSession,
+    sets: Vec<SetLog>,
+) -> Result<(), String> {
+    let storage = get_storage(&app)?;
+    let mut history = storage.load_session_history()?;
+
+    if let Some(pos) = history.iter().position(|s| s.id == session.id) {
+        history[pos] = session.clone();
+    } else if let Some(pos) = history.iter().position(|s| {
+        s.session_number == session.session_number
+            && (s.timestamp as i64 - session.timestamp as i64).abs() < 43_200_000
+    }) {
+        history[pos] = session.clone();
+    } else {
+        history.push(session.clone());
+    }
+    storage.save_session_history(&history)?;
+
+    // Update set logs
+    let mut all_logs = storage.load_set_logs()?;
+    all_logs.retain(|l| {
+        !(l.session_number == session.session_number
+            && (l.timestamp as i64 - session.timestamp as i64).abs() < 43_200_000)
+    });
+    for s in &sets {
+        all_logs.push(s.clone());
+    }
+    storage.save_set_logs(&all_logs)?;
+
+    if let Ok(mut profile) = storage.load_profile() {
+        for s in &sets {
+            update_profile_from_set(&mut profile, s);
+        }
+        let _ = storage.save_profile(&profile);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_completed_session(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let storage = get_storage(&app)?;
+    let mut history = storage.load_session_history()?;
+    if let Some(pos) = history.iter().position(|s| s.id == id) {
+        let removed = history.remove(pos);
+        storage.save_session_history(&history)?;
+
+        let mut set_logs = storage.load_set_logs()?;
+        set_logs.retain(|l| {
+            !(l.session_number == removed.session_number
+                && (l.timestamp as i64 - removed.timestamp as i64).abs() < 43_200_000)
+        });
+        storage.save_set_logs(&set_logs)?;
+    }
+    Ok(())
+}
+

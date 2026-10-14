@@ -52,9 +52,13 @@ pub fn run() {
             commands::get_exercises,
             commands::get_set_logs,
             commands::trigger_deload,
+            commands::restore_deload_plan,
+            commands::apply_progression,
             commands::calibrate_dumbbell,
             commands::complete_session,
             commands::get_session_history,
+            commands::update_completed_session,
+            commands::delete_completed_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
