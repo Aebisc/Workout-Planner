@@ -189,7 +189,7 @@
     "bw_anchors": null,
     "time_based": false,
     "stretched_position": false,
-    "cues": "Lie on floor, 15 kg dumbbell in one hand. Lower until upper arm gently touches floor, press up."
+    "cues": "Lie on floor, 12.5 kg dumbbell in one hand. Lower until upper arm gently touches floor, press up."
   },
   {
     "id": "db_pullover",
@@ -212,7 +212,7 @@
     "bw_anchors": null,
     "time_based": false,
     "stretched_position": true,
-    "cues": "Lie on floor or upper back supported, grip 15 kg dumbbell with both hands overhead into deep lat and chest stretch."
+    "cues": "Lie on floor or upper back supported, grip 12.5 kg dumbbell with both hands overhead into deep lat and chest stretch."
   },
   {
     "id": "slow_lowering_pull_up",
@@ -344,7 +344,7 @@
     "bw_anchors": null,
     "time_based": false,
     "stretched_position": true,
-    "cues": "Hand or knee supported on bed. Allow full scapular protraction stretch at bottom, pull 15 kg dumbbell toward hip."
+    "cues": "Hand or knee supported on bed. Allow full scapular protraction stretch at bottom, pull 12.5 kg dumbbell toward hip."
   },
   {
     "id": "db_curl",
@@ -367,7 +367,7 @@
     "bw_anchors": null,
     "time_based": false,
     "stretched_position": true,
-    "cues": "15 kg unilateral curl. Supinated or neutral grip. Full elbow extension at bottom for biceps stretch, control 3s negative."
+    "cues": "12.5 kg unilateral curl. Supinated or neutral grip. Full elbow extension at bottom for biceps stretch, control 3s negative."
   },
   {
     "id": "overhead_db_extension",
@@ -390,7 +390,7 @@
     "bw_anchors": null,
     "time_based": false,
     "stretched_position": true,
-    "cues": "Both hands holding 15 kg dumbbell overhead. Lower dumbbell behind neck for deep long-head triceps stretch."
+    "cues": "Both hands holding 12.5 kg dumbbell overhead. Lower dumbbell behind neck for deep long-head triceps stretch."
   },
   {
     "id": "floor_skull_crusher",
@@ -413,7 +413,7 @@
     "bw_anchors": null,
     "time_based": false,
     "stretched_position": false,
-    "cues": "Lie on floor, hold 15 kg dumbbell with both hands. Lower toward crown of head, extend back up."
+    "cues": "Lie on floor, hold 12.5 kg dumbbell with both hands. Lower toward crown of head, extend back up."
   },
   {
     "id": "dead_hang",
@@ -459,7 +459,7 @@
     "bw_anchors": null,
     "time_based": false,
     "stretched_position": true,
-    "cues": "Forearm rested on bed or thigh with 15 kg dumbbell. Full finger-roll extension at bottom for deep forearm stretch, curl wrist upward."
+    "cues": "Forearm rested on bed or thigh with 12.5 kg dumbbell. Full finger-roll extension at bottom for deep forearm stretch, curl wrist upward."
   },
   {
     "id": "hanging_knee_raise",

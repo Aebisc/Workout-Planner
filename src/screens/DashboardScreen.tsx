@@ -98,11 +98,36 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     const weeklyIndirect = indirectSets * weeklyRate;
     const weeklyTotal = weeklyDirect + weeklyIndirect;
 
+    let preDeloadTotal: number | undefined = undefined;
+    if (plan?.is_deload && plan.pre_deload_sessions) {
+      let preDirect = 0;
+      let preIndirect = 0;
+      plan.pre_deload_sessions.forEach((s) => {
+        s.blocks.forEach((b) => {
+          const ex = exercises.find((e) => e.id === b.exercise_id);
+          if (ex) {
+            if (ex.primary_muscle === m) {
+              preDirect += b.sets;
+            } else {
+              const weight = ex.contribution_weights[m] || 0;
+              if (weight > 0) {
+                preIndirect += b.sets * weight;
+              }
+            }
+          }
+        });
+      });
+      preDeloadTotal = (preDirect + preIndirect) * weeklyRate;
+    }
+
     // Determine Tier
     let tier = 'Optimal Growth';
     let tierClass = 'tier-growth';
 
-    if (weeklyTotal < 1.0 * factor) {
+    if (plan?.is_deload) {
+      tier = 'Deload Recovery (~50%)';
+      tierClass = 'badge-info';
+    } else if (weeklyTotal < 1.0 * factor) {
       tier = 'Muscle Loss Risk';
       tierClass = 'tier-loss';
     } else if (weeklyTotal < 5.0 * factor) {
@@ -121,6 +146,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       direct: weeklyDirect,
       indirect: weeklyIndirect,
       total: weeklyTotal,
+      preDeloadTotal,
       tier,
       tierClass,
       isPriority: settings.priority_muscles.includes(m),
@@ -183,7 +209,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
             <div className="volume-number">
               <span className="val">{item.total.toFixed(1)}</span>
-              <span className="unit">sets/week</span>
+              <span className="unit">
+                sets/week {plan?.is_deload && item.preDeloadTotal ? `(Full plan: ${item.preDeloadTotal.toFixed(1)})` : ''}
+              </span>
             </div>
 
             {/* Volume Breakdown Bar with Tier Boundary Markers */}
@@ -423,6 +451,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         onClose={() => setEditingSession(null)}
         sessionToEdit={editingSession}
         onSaved={loadDashboardData}
+        units={settings.units}
       />
     </div>
   );

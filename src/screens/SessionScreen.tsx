@@ -56,10 +56,6 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
     blockIndex: 0,
   });
 
-  const [profile, setProfile] = useState<any | null>(null);
-  const [dbCalibReps, setDbCalibReps] = useState<number>(10);
-  const [calibratingDb, setCalibratingDb] = useState<boolean>(false);
-
   // Finishing session state
   const [submittingSession, setSubmittingSession] = useState<boolean>(false);
   const [sessionCompletedSummary, setSessionCompletedSummary] = useState<{
@@ -73,13 +69,11 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
   const loadData = async () => {
     setLoading(true);
     try {
-      const [sess, allEx, prof] = await Promise.all([
+      const [sess, allEx] = await Promise.all([
         api.getSession(sessionNumber),
         api.getExercises(),
-        api.getProfile(),
       ]);
       setSession(sess);
-      setProfile(prof);
 
       const exMap: Record<string, Exercise> = {};
       allEx.forEach((e) => (exMap[e.id] = e));
@@ -98,20 +92,6 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
       console.error(err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSaveDumbbellCalibration = async () => {
-    setCalibratingDb(true);
-    try {
-      const updatedProf = await api.calibrateDumbbell(dbCalibReps);
-      setProfile(updatedProf);
-      const updatedSess = await api.getSession(sessionNumber);
-      setSession(updatedSess);
-    } catch (err) {
-      alert(`Failed to save dumbbell calibration: ${err}`);
-    } finally {
-      setCalibratingDb(false);
     }
   };
 
@@ -332,42 +312,6 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
           </div>
         </div>
       </div>
-
-      {session.blocks.some((b) => exercises[b.exercise_id]?.equipment.includes('dumbbell')) &&
-        profile &&
-        profile.dumbbell_calibrated_reps === null && (
-          <div className="card dumbbell-calib-banner">
-            <div className="dumbbell-banner-header">
-              <span className="dumbbell-icon">🔔</span>
-              <div>
-                <h4 className="dumbbell-banner-title">
-                  First-Time 15 kg Dumbbell Calibration
-                </h4>
-                <p className="dumbbell-banner-desc">
-                  Plan §3.5: This workout contains a 15 kg dumbbell movement. Perform one test set close to failure (0–3 reps in reserve) with your 15 kg dumbbell to calibrate your custom tempo, pause, and lengthened partial cues.
-                </p>
-              </div>
-            </div>
-            <div className="dumbbell-inputs-row">
-              <label className="dumbbell-input-label">Reps logged:</label>
-              <input
-                type="number"
-                min={1}
-                max={60}
-                value={dbCalibReps}
-                onChange={(e) => setDbCalibReps(Math.max(1, parseInt(e.target.value) || 1))}
-                className="dumbbell-input"
-              />
-              <button
-                className="btn btn-primary btn-sm"
-                disabled={calibratingDb}
-                onClick={handleSaveDumbbellCalibration}
-              >
-                {calibratingDb ? 'Saving...' : '💾 Save Calibration & Adapt Targets'}
-              </button>
-            </div>
-          </div>
-        )}
 
       <div className="blocks-list">
         {session.blocks.map((block, bIdx) => {

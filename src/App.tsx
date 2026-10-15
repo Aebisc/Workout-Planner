@@ -122,7 +122,10 @@ export function App() {
           <SessionScreen
             sessionNumber={selectedSessionNumber}
             settings={settings}
-            onBackToOverview={() => setTab('overview')}
+            onBackToOverview={async () => {
+              await refreshState();
+              setTab('overview');
+            }}
           />
         )}
 

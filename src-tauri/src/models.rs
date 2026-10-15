@@ -197,7 +197,6 @@ pub struct CalibrationAnswers {
 pub struct Profile {
     pub body_weight_kg: f64,
     pub estimated_max_reps: HashMap<String, u32>,
-    pub dumbbell_calibrated_reps: Option<u32>,
 }
 
 impl Default for Profile {
@@ -205,7 +204,6 @@ impl Default for Profile {
         Self {
             body_weight_kg: 75.0,
             estimated_max_reps: HashMap::new(),
-            dumbbell_calibrated_reps: None,
         }
     }
 }

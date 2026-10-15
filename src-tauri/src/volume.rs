@@ -236,7 +236,42 @@ pub fn evaluate_stall_warnings(
         for block in &session.blocks {
             if checked_exercises.insert(&block.exercise_id) {
                 if let Some(ex) = exercises_map.get(&block.exercise_id) {
-                    if crate::progression::detect_stall_from_all_logs(&ex.id, all_logs) {
+                    let (min_target, top_target) = if ex.time_based {
+                        (
+                            block.seconds_target_min.unwrap_or(20),
+                            block.seconds_target_max.unwrap_or(60),
+                        )
+                    } else {
+                        (
+                            block.rep_target_min.max(6),
+                            block.rep_target_max.max(15),
+                        )
+                    };
+
+                    let mut ex_logs: Vec<&SetLog> = all_logs
+                        .iter()
+                        .filter(|l| l.exercise_id == ex.id && l.reps_from_failure <= 3)
+                        .collect();
+                    ex_logs.sort_by_key(|l| l.timestamp);
+
+                    let already_mastered = if let Some(latest_log) = ex_logs.last() {
+                        let latest_ts = latest_log.timestamp;
+                        let latest_exposure_perfs: Vec<u32> = ex_logs
+                            .iter()
+                            .filter(|l| (l.timestamp - latest_ts).abs() < 3 * 3600 * 1000)
+                            .map(|l| l.reps_or_seconds)
+                            .collect();
+                        crate::progression::check_ready_to_progress(
+                            ex.time_based,
+                            min_target,
+                            top_target,
+                            &latest_exposure_perfs,
+                        )
+                    } else {
+                        false
+                    };
+
+                    if !already_mastered && crate::progression::detect_stall_from_all_logs(&ex.id, all_logs) {
                         warnings.push(Warning {
                             code: "exercise_stall".to_string(),
                             muscle: Some(ex.primary_muscle),

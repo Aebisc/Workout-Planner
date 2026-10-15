@@ -54,7 +54,6 @@ pub fn run() {
             commands::trigger_deload,
             commands::restore_deload_plan,
             commands::apply_progression,
-            commands::calibrate_dumbbell,
             commands::complete_session,
             commands::get_session_history,
             commands::update_completed_session,

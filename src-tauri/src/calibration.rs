@@ -177,7 +177,6 @@ pub fn calibrate_initial_profile(
     let mut profile = Profile {
         body_weight_kg: answers.body_weight_kg,
         estimated_max_reps: HashMap::new(),
-        dumbbell_calibrated_reps: None,
     };
 
     let push_ladder: Vec<Exercise> = exercises

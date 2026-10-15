@@ -69,9 +69,6 @@ export const api = {
 
   triggerDeload: () => invoke<Plan>('trigger_deload'),
 
-  calibrateDumbbell: (reps: number) =>
-    invoke<Profile>('calibrate_dumbbell', { reps }),
-
   updateCompletedSession: (session: CompletedSession, sets: SetLog[]) =>
     invoke<void>('update_completed_session', { session, sets }),
 

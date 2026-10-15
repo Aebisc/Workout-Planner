@@ -1,9 +1,9 @@
 use muscle_growth_planner_lib::calibration::calibrate_initial_profile;
 use muscle_growth_planner_lib::models::{
-    CalibrationAnswers, ExperienceLevel, Muscle, Profile, SetLog, Settings,
+    Block, CalibrationAnswers, ExperienceLevel, Muscle, Profile, SetLog, Settings,
 };
 use muscle_growth_planner_lib::progression::{
-    apply_deload, detect_stall, detect_stall_from_all_logs, restore_from_deload,
+    apply_deload, detect_stall, detect_stall_from_all_logs, evaluate_progression, restore_from_deload,
 };
 use muscle_growth_planner_lib::scheduler::{
     days_per_week_to_cycle, generate_plan, partition_sets_into_blocks, sort_session_blocks,
@@ -323,7 +323,7 @@ fn test_dumbbell_calibration_adapts_cues_and_rep_targets() {
         ..Default::default()
     };
 
-    // Case 1: Uncalibrated profile
+    // Case 1: Uncalibrated profile (no db_curl estimated max reps)
     let profile_uncalibrated = Profile::default();
     let plan_1 = generate_plan(
         &settings,
@@ -339,11 +339,9 @@ fn test_dumbbell_calibration_adapts_cues_and_rep_targets() {
         .expect("db_curl should be scheduled for biceps priority");
     assert_eq!(db_block_1.tempo_cue, "Controlled 2-3s negative");
 
-    // Case 2: Calibrated high reps (>22 reps) -> lengthened partials cue
-    let profile_high = Profile {
-        dumbbell_calibrated_reps: Some(25),
-        ..Default::default()
-    };
+    // Case 2: High capacity on db_curl (>22 reps) -> lengthened partials cue
+    let mut profile_high = Profile::default();
+    profile_high.estimated_max_reps.insert("db_curl".to_string(), 25);
     let plan_2 = generate_plan(
         &settings,
         &profile_high,
@@ -360,11 +358,9 @@ fn test_dumbbell_calibration_adapts_cues_and_rep_targets() {
     assert_eq!(db_block_2.rep_target_min, 10);
     assert_eq!(db_block_2.rep_target_max, 15);
 
-    // Case 3: Calibrated moderate reps (18 reps) -> 3-4s lowering with 1s pause
-    let profile_mod = Profile {
-        dumbbell_calibrated_reps: Some(18),
-        ..Default::default()
-    };
+    // Case 3: Moderate capacity on db_curl (18 reps) -> 3-4s lowering with 1s pause
+    let mut profile_mod = Profile::default();
+    profile_mod.estimated_max_reps.insert("db_curl".to_string(), 18);
     let plan_3 = generate_plan(
         &settings,
         &profile_mod,
@@ -711,6 +707,232 @@ fn test_load_increase_prevents_false_stall() {
         "Load increased from 0kg to 2.5kg; must not be flagged as a stall"
     );
 }
+
+#[test]
+fn test_time_based_exercise_progression_uses_seconds_target_max() {
+    let exercises = load_embedded_exercises();
+    let dead_hang = exercises.iter().find(|e| e.id == "dead_hang").unwrap();
+
+    let block = Block {
+        exercise_id: "dead_hang".to_string(),
+        sets: 3,
+        rep_target_min: 0,
+        rep_target_max: 0,
+        seconds_target_min: Some(20),
+        seconds_target_max: Some(60),
+        effort_target: "0–1 RIR".to_string(),
+        tempo_cue: "Controlled hold".to_string(),
+        rest_cue: "1-2 min between sets".to_string(),
+        added_weight_kg: 0.0,
+    };
+    let settings = Settings::default();
+
+    // Trainee logs 25s holds at 1 RIR (well above 15, but below 60s target)
+    let logs_25s = vec![
+        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 25, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 2, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 25, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+    let sugg_submax = evaluate_progression(1, 0, &block, dead_hang, &logs_25s, &settings).unwrap();
+    assert_eq!(sugg_submax.action, "add_reps");
+    assert!(sugg_submax.message.contains("60 seconds"), "Message should prescribe working towards 60 seconds: {}", sugg_submax.message);
+
+    // Trainee logs 60s holds at 1 RIR (hits top target window)
+    let logs_60s = vec![
+        SetLog { timestamp: 3, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 60, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 4, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 60, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+    let sugg_top = evaluate_progression(1, 0, &block, dead_hang, &logs_60s, &settings).unwrap();
+    assert_eq!(sugg_top.action, "intensify_execution");
+    assert!(sugg_top.message.contains("Focus on full-body tension"));
+}
+
+#[test]
+fn test_top_rep_mastery_is_never_overwritten_by_stall() {
+    let exercises = load_embedded_exercises();
+    let mut ex_map = HashMap::new();
+    for ex in &exercises {
+        ex_map.insert(ex.id.clone(), ex.clone());
+    }
+
+    let settings = Settings {
+        sets_per_day: 3,
+        days_per_week: 3.0,
+        priority_muscles: vec![Muscle::Chest],
+        ..Default::default()
+    };
+    let profile = Profile::default();
+    let plan = generate_plan(&settings, &profile, &exercises, HashMap::new(), HashMap::new());
+
+    let day = 86_400_000_i64;
+    let base = 1_700_000_000_000_i64;
+
+    let target_ex_id = plan.sessions[0].blocks[0].exercise_id.clone();
+    let target_ex = ex_map.get(&target_ex_id).unwrap();
+
+    // 3 consecutive exposures hitting 15, 15, 15 reps (hitting rep_target_max = 15)
+    let logs = vec![
+        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + 2 * day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+
+    // 1. evaluate_stall_warnings must not flag target_ex as stalled because top target was hit
+    let stall_warnings = evaluate_stall_warnings(&plan, &ex_map, &logs);
+    assert!(
+        !stall_warnings.iter().any(|w| w.code == "exercise_stall" && w.muscle == Some(target_ex.primary_muscle)),
+        "Top-rep mastery (15 reps) must not be flagged as a stall warning"
+    );
+
+    // 2. evaluate_progression on latest session sets returns intensify_execution or advance_variation
+    let block = &plan.sessions[0].blocks[0];
+    let session_sets = vec![
+        SetLog { timestamp: base + 2 * day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+    let sugg = evaluate_progression(1, 0, block, target_ex, &session_sets, &settings).unwrap();
+    assert_ne!(sugg.action, "stall_detected");
+    assert!(sugg.action == "intensify_execution" || sugg.action == "advance_variation");
+}
+
+#[test]
+fn test_swap_exercise_during_deload_preserves_swap_on_restore() {
+    use muscle_growth_planner_lib::scheduler::{effort_target_for_exercise, rest_cue_for_exercise};
+
+    let exercises = load_embedded_exercises();
+    let settings = Settings {
+        sets_per_day: 4,
+        days_per_week: 3.0,
+        priority_muscles: vec![Muscle::Chest],
+        ..Default::default()
+    };
+    let profile = Profile::default();
+    let mut plan = generate_plan(&settings, &profile, &exercises, HashMap::new(), HashMap::new());
+
+    // Apply deload (is_deload == true)
+    plan = apply_deload(&plan);
+    assert!(plan.is_deload);
+    assert!(plan.pre_deload_sessions.is_some());
+
+    // Swap block 0 in Session 1 from push_up to feet_elevated_push_up
+    let new_ex = exercises.iter().find(|e| e.id == "feet_elevated_push_up").unwrap();
+    let block = &mut plan.sessions[0].blocks[0];
+    block.exercise_id = new_ex.id.clone();
+    block.effort_target = effort_target_for_exercise(new_ex);
+    block.rest_cue = rest_cue_for_exercise(new_ex);
+
+    // Sync to pre_deload_sessions
+    if let Some(ref mut pre_sessions) = plan.pre_deload_sessions {
+        let pre_block = &mut pre_sessions[0].blocks[0];
+        pre_block.exercise_id = new_ex.id.clone();
+        pre_block.effort_target = effort_target_for_exercise(new_ex);
+        pre_block.rest_cue = rest_cue_for_exercise(new_ex);
+    }
+
+    // Restore from deload
+    let restored = restore_from_deload(&plan);
+    assert!(!restored.is_deload);
+    assert_eq!(restored.sessions[0].blocks[0].exercise_id, "feet_elevated_push_up");
+    assert_eq!(restored.sessions[0].blocks[0].effort_target, "1–2 RIR (0–1 RIR on final set)");
+    // Restored session retains original pre-deload volume (4 sets)
+    assert_eq!(restored.sessions[0].blocks[0].sets, 4);
+}
+
+#[test]
+fn test_rebuild_profile_maxes_reverts_typo_or_deletion() {
+    use muscle_growth_planner_lib::progression::rebuild_profile_maxes_from_logs;
+
+    let mut profile = Profile::default();
+    profile.estimated_max_reps.insert("push_up".to_string(), 102); // Accidental typo (100 reps + 2 RIR)
+
+    let typo_logs = vec![
+        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 100, added_weight_kg: 0.0, reps_from_failure: 2 },
+    ];
+    let remaining_valid_logs = vec![
+        SetLog { timestamp: 2, session_number: 2, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 2 },
+    ];
+
+    rebuild_profile_maxes_from_logs(&mut profile, &typo_logs, &remaining_valid_logs);
+    assert_eq!(profile.estimated_max_reps.get("push_up").copied(), Some(14)); // 12 reps + 2 RIR
+}
+
+#[test]
+fn test_fatigue_aware_double_progression_triggers_on_realistic_set_dropoff() {
+    let exercises = load_embedded_exercises();
+    let push_up = exercises.iter().find(|e| e.id == "push_up").unwrap();
+    let settings = Settings::default();
+
+    let block = Block {
+        exercise_id: "push_up".to_string(),
+        sets: 3,
+        rep_target_min: 8,
+        rep_target_max: 15,
+        seconds_target_min: None,
+        seconds_target_max: None,
+        effort_target: "1–2 RIR".to_string(),
+        tempo_cue: "Controlled 2-3s negative".to_string(),
+        rest_cue: "2–3 min".to_string(),
+        added_weight_kg: 0.0,
+    };
+
+    // Realistic fatigue drop-off: 16, 15, 13 at 1 RIR (Set 1 >= 15, all sets >= 8, avg 14.67 >= 13.5)
+    let logs_mastered = vec![
+        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 16, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 2, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 3, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 13, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+
+    let sugg = evaluate_progression(1, 0, &block, push_up, &logs_mastered, &settings);
+    assert!(sugg.is_some());
+    let s = sugg.unwrap();
+    assert!(s.action == "intensify_execution" || s.action == "advance_variation");
+
+    // Sub-target logs: 12, 11, 10 at 1 RIR (should keep working towards top reps)
+    let logs_in_progress = vec![
+        SetLog { timestamp: 4, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 5, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 11, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 6, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+
+    let sugg_sub = evaluate_progression(1, 0, &block, push_up, &logs_in_progress, &settings);
+    assert!(sugg_sub.is_some());
+    assert_eq!(sugg_sub.unwrap().action, "add_reps");
+}
+
+#[test]
+fn test_no_duplicate_exercise_blocks_in_single_session() {
+    let exercises = load_embedded_exercises();
+    let settings = Settings {
+        sets_per_day: 5,
+        days_per_week: 3.5,
+        priority_muscles: vec![Muscle::Chest],
+        maintenance_on: false,
+        ..Default::default()
+    };
+    let profile = Profile::default();
+
+    let plan = generate_plan(
+        &settings,
+        &profile,
+        &exercises,
+        HashMap::new(),
+        HashMap::new(),
+    );
+
+    for session in &plan.sessions {
+        let mut seen = std::collections::HashSet::new();
+        for block in &session.blocks {
+            assert!(
+                seen.insert(&block.exercise_id),
+                "Found duplicate exercise_id '{}' in session {}",
+                block.exercise_id,
+                session.session_number
+            );
+        }
+        let total_sets: u32 = session.blocks.iter().map(|b| b.sets).sum();
+        assert_eq!(total_sets, 5, "Total sets in session {} must equal 5", session.session_number);
+    }
+}
+
+
 
 
 

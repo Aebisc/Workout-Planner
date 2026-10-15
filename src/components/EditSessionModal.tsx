@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
-import { CompletedSession, Plan, SessionExerciseSummary, SetLog } from '../types';
+import { CompletedSession, Exercise, Plan, SessionExerciseSummary, SetLog, Units } from '../types';
+import { KG_TO_LB } from '../utils/units';
 
 interface ExerciseFormState {
   exercise_id: string;
@@ -20,6 +21,7 @@ interface EditSessionModalProps {
   initialSessionNumber?: number;
   plan?: Plan;
   onSaved: () => void;
+  units?: Units;
 }
 
 function toLocalDateKey(date: Date): string {
@@ -37,12 +39,26 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
   initialSessionNumber,
   plan,
   onSaved,
+  units = 'metric',
 }) => {
   const [workoutDate, setWorkoutDate] = useState<string>('');
   const [sessionNum, setSessionNum] = useState<number>(1);
   const [exerciseForms, setExerciseForms] = useState<ExerciseFormState[]>([]);
   const [saving, setSaving] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
+  const [exercisesMap, setExercisesMap] = useState<Record<string, Exercise>>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    api
+      .getExercises()
+      .then((list) => {
+        const map: Record<string, Exercise> = {};
+        list.forEach((e) => (map[e.id] = e));
+        setExercisesMap(map);
+      })
+      .catch(console.error);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -132,19 +148,22 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
 
       const targetSession = plan.sessions.find((s) => s.session_number === initialSessionNumber);
       if (targetSession) {
-        const forms: ExerciseFormState[] = targetSession.blocks.map((b) => ({
-          exercise_id: b.exercise_id,
-          exercise_name: b.exercise_id.replace(/_/g, ' '),
-          added_weight_kg: b.added_weight_kg || 0,
-          sets: Array.from({ length: Math.max(1, b.sets) }, () => ({
-            reps: b.rep_target_min || 10,
-            rir: 2,
-          })),
-        }));
+        const forms: ExerciseFormState[] = targetSession.blocks.map((b) => {
+          const ex = exercisesMap[b.exercise_id];
+          return {
+            exercise_id: b.exercise_id,
+            exercise_name: ex?.name || b.exercise_id.replace(/_/g, ' '),
+            added_weight_kg: b.added_weight_kg || 0,
+            sets: Array.from({ length: Math.max(1, b.sets) }, () => ({
+              reps: b.seconds_target_min ?? b.rep_target_min ?? 10,
+              rir: 2,
+            })),
+          };
+        });
         setExerciseForms(forms);
       }
     }
-  }, [isOpen, sessionToEdit, initialDate, initialSessionNumber, plan]);
+  }, [isOpen, sessionToEdit, initialDate, initialSessionNumber, plan, exercisesMap]);
 
   if (!isOpen) return null;
 
@@ -312,13 +331,21 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
                   <span className="edit-ex-sub">{ex.sets.length} sets logged</span>
                 </div>
                 <div className="edit-weight-input-group">
-                  <label className="edit-weight-label">+ Load (kg):</label>
+                  <label className="edit-weight-label">+ Load ({units === 'imperial' ? 'lb' : 'kg'}):</label>
                   <input
                     type="number"
                     step="0.5"
                     min="0"
-                    value={ex.added_weight_kg || 0}
-                    onChange={(e) => handleUpdateAddedWeight(exIdx, parseFloat(e.target.value) || 0)}
+                    value={
+                      units === 'imperial'
+                        ? Number(((ex.added_weight_kg || 0) * KG_TO_LB).toFixed(1))
+                        : Number((ex.added_weight_kg || 0).toFixed(1))
+                    }
+                    onChange={(e) => {
+                      const rawVal = parseFloat(e.target.value) || 0;
+                      const weightKg = units === 'imperial' ? rawVal / KG_TO_LB : rawVal;
+                      handleUpdateAddedWeight(exIdx, weightKg);
+                    }}
                     className="edit-num-input"
                   />
                 </div>
@@ -328,7 +355,7 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
               <div className="edit-sets-table">
                 <div className="edit-sets-head">
                   <span>Set</span>
-                  <span>Reps / Secs</span>
+                  <span>{exercisesMap[ex.exercise_id]?.time_based ? 'Seconds' : 'Reps'}</span>
                   <span>RIR (Proximity)</span>
                   <span style={{ textAlign: 'right' }}>Action</span>
                 </div>
@@ -338,7 +365,7 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
                     <input
                       type="number"
                       min="1"
-                      max="100"
+                      max={exercisesMap[ex.exercise_id]?.time_based ? "600" : "100"}
                       value={s.reps}
                       onChange={(e) => handleUpdateSetReps(exIdx, sIdx, parseInt(e.target.value) || 0)}
                       className="edit-num-input edit-reps-input"

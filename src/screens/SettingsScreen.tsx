@@ -34,17 +34,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     initialSettings.calendar_view
   );
 
-  const [dbReps, setDbReps] = useState<number | null>(null);
-  const [dbSaving, setDbSaving] = useState<boolean>(false);
-
   const [saving, setSaving] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-
-  React.useEffect(() => {
-    api.getProfile()
-      .then((p) => setDbReps(p.dumbbell_calibrated_reps))
-      .catch(console.error);
-  }, []);
 
   const handleUnitsChange = (newUnits: Units) => {
     if (newUnits !== units) {
@@ -56,19 +47,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         setBedHeightDisplay(Math.round(bedHeightDisplay / CM_TO_IN));
       }
       setUnits(newUnits);
-    }
-  };
-
-  const handleUpdateDbCalibration = async (reps: number) => {
-    setDbSaving(true);
-    try {
-      const prof = await api.calibrateDumbbell(reps);
-      setDbReps(prof.dumbbell_calibrated_reps);
-      setStatusMessage('Dumbbell calibration saved and plan cues updated!');
-    } catch (err) {
-      alert(`Failed to save dumbbell calibration: ${err}`);
-    } finally {
-      setDbSaving(false);
     }
   };
 
@@ -176,7 +154,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <span className="toggle-label">
               {backpack
                 ? 'Enabled (app will prescribe water bottles when reps exceed 20)'
-                : 'Disabled (bodyweight and 15 kg dumbbell only)'}
+                : 'Disabled (bodyweight and 12.5 kg dumbbell only)'}
             </span>
           </div>
         </div>
@@ -288,40 +266,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 ? 'Calendar mode (maps sessions to weekdays)'
                 : 'Sequential queue (rolling Session N order, independent of weekdays)'}
             </span>
-          </div>
-        </div>
-
-        <div className="dumbbell-calib-card">
-          <div className="dumbbell-calib-header">
-            <span className="dumbbell-icon">🏋️</span>
-            <div>
-              <label className="dumbbell-title">
-                15 kg Dumbbell Calibration (§3.5)
-              </label>
-              <p className="dumbbell-hint">
-                {dbReps !== null
-                  ? `Currently calibrated at ${dbReps} reps close to failure. Tempo, pause, and lengthened partial cues automatically adapt to this strength baseline.`
-                  : 'Not calibrated yet. Enter reps achieved on a hard set (0–3 RIR) with your 15 kg dumbbell to customize tempo and lengthened partial cues.'}
-              </p>
-            </div>
-          </div>
-          <div className="dumbbell-inputs-row">
-            <input
-              type="number"
-              min={1}
-              max={60}
-              value={dbReps ?? 10}
-              onChange={(e) => setDbReps(Math.max(1, parseInt(e.target.value) || 1))}
-              className="dumbbell-input"
-            />
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              disabled={dbSaving}
-              onClick={() => handleUpdateDbCalibration(dbReps ?? 10)}
-            >
-              {dbSaving ? 'Saving...' : 'Update DB Calibration'}
-            </button>
           </div>
         </div>
 

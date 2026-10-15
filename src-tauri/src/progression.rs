@@ -8,6 +8,48 @@ use crate::models::{
 /// 2. Execution intensifiers (slow 3-4s lowering, pause in stretch, lengthened partials).
 /// 3. Harder variation (next rung on ladder).
 /// 4. Backpack weight (if enabled, in 1.5L / 5L bottle units).
+/// Checks whether logged performances meet the fatigue-aware progression criteria:
+/// Condition A: Strict top sweep across all hard sets.
+/// Condition B: 2+ hard sets inside target window, best set >= top_target, and average within ~10% of top.
+/// Condition C: First/best set overflows top target by 2+ reps (or 10+s) with all sets inside window.
+pub fn check_ready_to_progress(
+    time_based: bool,
+    min_target: u32,
+    top_target: u32,
+    hard_perfs: &[u32],
+) -> bool {
+    if hard_perfs.is_empty() {
+        return false;
+    }
+    let all_sets_hit_top = hard_perfs.iter().all(|&p| p >= top_target);
+    let max_perf = hard_perfs.iter().copied().max().unwrap_or(0);
+    let all_in_window = hard_perfs.iter().all(|&p| p >= min_target);
+    let avg_perf = hard_perfs.iter().copied().sum::<u32>() as f64 / (hard_perfs.len() as f64);
+
+    let avg_threshold = if time_based {
+        (top_target as f64) * 0.90
+    } else {
+        (top_target as f64) - 1.5
+    };
+    let overflow_threshold = if time_based {
+        top_target + 10
+    } else {
+        top_target + 2
+    };
+
+    all_sets_hit_top
+        || (hard_perfs.len() >= 2
+            && all_in_window
+            && ((max_perf >= top_target && avg_perf >= avg_threshold)
+                || max_perf >= overflow_threshold))
+}
+
+/// Evaluates double progression for an exercise based on recent logged sets.
+/// Progression order:
+/// 1. More reps up to top of window (e.g. 15 or 20 reps).
+/// 2. Execution intensifiers (slow 3-4s lowering, pause in stretch, lengthened partials).
+/// 3. Harder variation (next rung on ladder).
+/// 4. Backpack weight (if enabled, in 1.5L / 5L bottle units).
 pub fn evaluate_progression(
     session_number: u32,
     block_index: usize,
@@ -38,10 +80,28 @@ pub fn evaluate_progression(
         });
     }
 
-    let top_rep = block.rep_target_max.max(15);
-    let all_sets_hit_top = hard_sets.iter().all(|l| l.reps_or_seconds >= top_rep);
+    let (min_target, top_target) = if exercise.time_based {
+        (
+            block.seconds_target_min.unwrap_or(20),
+            block.seconds_target_max.unwrap_or(60),
+        )
+    } else {
+        (
+            block.rep_target_min.max(6),
+            block.rep_target_max.max(15),
+        )
+    };
+    let unit_label = if exercise.time_based { "seconds" } else { "reps" };
 
-    if all_sets_hit_top {
+    let hard_perfs: Vec<u32> = hard_sets.iter().map(|l| l.reps_or_seconds).collect();
+    let ready_to_progress = check_ready_to_progress(
+        exercise.time_based,
+        min_target,
+        top_target,
+        &hard_perfs,
+    );
+
+    if ready_to_progress {
         // Step 2, 3 or 4: Execution intensifiers -> Harder variation -> Backpack weight
         let partials_cue = if exercise.stretched_position && !exercise.time_based {
             ", and lengthened partials after failure"
@@ -50,14 +110,45 @@ pub fn evaluate_progression(
         };
 
         if let Some(ref harder_id) = exercise.harder_id {
-            if !block.tempo_cue.contains("3-4s") {
+            if exercise.time_based {
+                if !block.tempo_cue.contains("Focus on full-body tension") {
+                    Some(ProgressionSuggestion {
+                        session_number,
+                        block_index,
+                        exercise_id: exercise.id.clone(),
+                        action: "intensify_execution".to_string(),
+                        message: format!(
+                            "Top hold time reached. Deepen the stimulus first: focus on full-body tension and active shoulder/core bracing. When this feels mastered, advance to the next variation: {}.",
+                            harder_id
+                        ),
+                        new_added_weight_kg: None,
+                        next_exercise_id: Some(harder_id.clone()),
+                        new_tempo_cue: Some("Focus on full-body tension and active shoulder/core bracing".to_string()),
+                    })
+                } else {
+                    Some(ProgressionSuggestion {
+                        session_number,
+                        block_index,
+                        exercise_id: exercise.id.clone(),
+                        action: "advance_variation".to_string(),
+                        message: format!(
+                            "You've mastered the intensified hold on {}! Advance to the next ladder rung: {}.",
+                            exercise.name,
+                            harder_id
+                        ),
+                        new_added_weight_kg: None,
+                        next_exercise_id: Some(harder_id.clone()),
+                        new_tempo_cue: Some("Controlled hold".to_string()),
+                    })
+                }
+            } else if !block.tempo_cue.contains("3-4s") {
                 Some(ProgressionSuggestion {
                     session_number,
                     block_index,
                     exercise_id: exercise.id.clone(),
                     action: "intensify_execution".to_string(),
                     message: format!(
-                        "Top reps reached on all sets. Deepen the stimulus first: try a 3-4s lowering tempo, pause at the bottom{}. When this feels mastered, advance to the next variation: {}.",
+                        "Top reps reached. Deepen the stimulus first: try a 3-4s lowering tempo, pause at the bottom{}. When this feels mastered, advance to the next variation: {}.",
                         partials_cue,
                         harder_id
                     ),
@@ -98,6 +189,17 @@ pub fn evaluate_progression(
                 next_exercise_id: None,
                 new_tempo_cue: None,
             })
+        } else if exercise.time_based {
+            Some(ProgressionSuggestion {
+                session_number,
+                block_index,
+                exercise_id: exercise.id.clone(),
+                action: "intensify_execution".to_string(),
+                message: "Top hold time reached. Focus on full-body tension and active shoulder/core bracing.".to_string(),
+                new_added_weight_kg: None,
+                next_exercise_id: None,
+                new_tempo_cue: Some("Focus on full-body tension and active shoulder/core bracing".to_string()),
+            })
         } else {
             // Execution intensifiers for exercises without harder variations (e.g. dumbbell exercises)
             Some(ProgressionSuggestion {
@@ -121,13 +223,39 @@ pub fn evaluate_progression(
             exercise_id: exercise.id.clone(),
             action: "add_reps".to_string(),
             message: format!(
-                "Keep working towards {} reps across all sets at 0-3 reps from failure.",
-                top_rep
+                "Keep working towards {} {} across all sets at 0-3 reps from failure.",
+                top_target, unit_label
             ),
             new_added_weight_kg: None,
             next_exercise_id: None,
             new_tempo_cue: None,
         })
+    }
+}
+
+/// Rebuilds profile.estimated_max_reps for exercises affected by an edited or deleted session.
+pub fn rebuild_profile_maxes_from_logs(
+    profile: &mut Profile,
+    previous_logs_for_removed_session: &[SetLog],
+    all_remaining_logs: &[SetLog],
+) {
+    let affected_exercises: std::collections::HashSet<String> = previous_logs_for_removed_session
+        .iter()
+        .map(|l| l.exercise_id.clone())
+        .collect();
+
+    for ex_id in affected_exercises {
+        let max_from_logs = all_remaining_logs
+            .iter()
+            .filter(|l| l.exercise_id == ex_id && l.reps_from_failure <= 3)
+            .map(|l| l.reps_or_seconds + l.reps_from_failure)
+            .max();
+
+        if let Some(max_val) = max_from_logs {
+            profile.estimated_max_reps.insert(ex_id, max_val);
+        } else {
+            profile.estimated_max_reps.remove(&ex_id);
+        }
     }
 }
 

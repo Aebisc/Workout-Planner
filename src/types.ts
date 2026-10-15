@@ -61,7 +61,6 @@ export interface CalibrationAnswers {
 export interface Profile {
   body_weight_kg: number;
   estimated_max_reps: Record<string, number>;
-  dumbbell_calibrated_reps: number | null;
 }
 
 export interface Block {

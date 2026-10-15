@@ -1424,66 +1424,6 @@ input:checked + .slider:before {
   color: #a5b4fc;
 }
 
-/* Dumbbell Calibration Containers */
-.dumbbell-calib-card,
-.dumbbell-calib-banner {
-  background: rgba(245, 158, 11, 0.05);
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  border-left: 4px solid var(--accent-warning);
-  border-radius: var(--radius-md);
-  padding: 1.25rem;
-  margin: 0.5rem 0 1.25rem;
-}
-
-.dumbbell-calib-header,
-.dumbbell-banner-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  margin-bottom: 0.85rem;
-}
-
-.dumbbell-icon {
-  font-size: 1.5rem;
-  line-height: 1;
-}
-
-.dumbbell-title,
-.dumbbell-banner-title {
-  color: var(--accent-warning);
-  font-weight: 700;
-  font-size: 0.98rem;
-  margin-bottom: 0.25rem;
-  display: block;
-}
-
-.dumbbell-hint,
-.dumbbell-banner-desc {
-  font-size: 0.84rem;
-  color: var(--text-secondary);
-  line-height: 1.45;
-  margin-bottom: 0;
-}
-
-.dumbbell-inputs-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.dumbbell-input-label {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dumbbell-input {
-  width: 90px !important;
-  padding: 0.5rem 0.75rem !important;
-  text-align: center;
-  font-weight: 700;
-}
 
 /* Stepper Control */
 .stepper-group {

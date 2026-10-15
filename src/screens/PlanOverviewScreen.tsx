@@ -498,6 +498,7 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
         onSaved={() => {
           api.getSessionHistory().then(setHistory).catch(console.error);
         }}
+        units={settings.units}
       />
     </div>
   );

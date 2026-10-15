@@ -137,27 +137,29 @@ pub fn swap_exercise(
         .load_plan()?
         .ok_or_else(|| "No active workout plan found to swap exercise".to_string())?;
 
-    let session = plan
-        .sessions
-        .iter_mut()
-        .find(|s| s.session_number == session_number)
-        .ok_or_else(|| format!("Session {} not found", session_number))?;
-
-    if block_index >= session.blocks.len() {
-        return Err(format!("Block index {} out of bounds", block_index));
-    }
-
     let exercises = load_embedded_exercises();
+    let old_exercise_id = {
+        let session = plan
+            .sessions
+            .iter()
+            .find(|s| s.session_number == session_number)
+            .ok_or_else(|| format!("Session {} not found", session_number))?;
+
+        if block_index >= session.blocks.len() {
+            return Err(format!("Block index {} out of bounds", block_index));
+        }
+        session.blocks[block_index].exercise_id.clone()
+    };
+
     let new_ex = exercises
         .iter()
         .find(|e| e.id == new_exercise_id)
         .ok_or_else(|| format!("Exercise {} not found", new_exercise_id))?;
 
-    let block = &mut session.blocks[block_index];
     let old_ex = exercises
         .iter()
-        .find(|e| e.id == block.exercise_id)
-        .ok_or_else(|| format!("Current exercise {} not found in library", block.exercise_id))?;
+        .find(|e| e.id == old_exercise_id)
+        .ok_or_else(|| format!("Current exercise {} not found in library", old_exercise_id))?;
 
     // 1. Muscle match validation (Plan §7: must train the same muscle)
     let is_muscle_compatible = new_ex.primary_muscle == old_ex.primary_muscle
@@ -197,95 +199,67 @@ pub fn swap_exercise(
         ));
     }
 
-    // 3. Maintain block set count, update exercise id and cues
-    block.exercise_id = new_ex.id.clone();
-    if new_ex.time_based {
-        block.rep_target_min = 0;
-        block.rep_target_max = 0;
-        block.seconds_target_min = Some(20);
-        block.seconds_target_max = Some(60);
-    } else {
-        block.rep_target_min = 8;
-        block.rep_target_max = 15;
-        block.seconds_target_min = None;
-        block.seconds_target_max = None;
-    }
+    // 3. Mutate session block with unified cues and maintain block set count
+    let mutate_session_block = |sess: &mut Session| -> Result<(), String> {
+        let block = sess
+            .blocks
+            .get_mut(block_index)
+            .ok_or_else(|| format!("Block index {} not found in session {}", block_index, sess.session_number))?;
 
-    // Differentiate rest cue per Plan §8
-    block.rest_cue = match new_ex.ladder.as_str() {
-        "biceps"
-        | "triceps_stretch"
-        | "triceps_isolation"
-        | "forearms_isolation"
-        | "forearms_grip"
-        | "abs"
-        | "abs_floor" => "1-2 min between sets".to_string(),
-        _ => "2-3 min between sets".to_string(),
-    };
+        block.exercise_id = new_ex.id.clone();
+        block.added_weight_kg = 0.0;
+        block.tempo_cue = "Controlled 2-3s negative".to_string();
+        if new_ex.time_based {
+            block.rep_target_min = 0;
+            block.rep_target_max = 0;
+            block.seconds_target_min = Some(20);
+            block.seconds_target_max = Some(60);
+        } else {
+            block.rep_target_min = 8;
+            block.rep_target_max = 15;
+            block.seconds_target_min = None;
+            block.seconds_target_max = None;
+        }
 
-    // Adapt tempo cue if dumbbell exercise and profile has dumbbell calibration
-    if new_ex.equipment.contains(&"dumbbell".to_string()) {
-        if let Ok(profile) = storage.load_profile() {
-            if let Some(db_reps) = profile.dumbbell_calibrated_reps {
-                if db_reps > 22 {
-                    block.tempo_cue = "Slow 3-4s lowering, pause in stretch, plus lengthened partials after failure".to_string();
-                    block.rep_target_min = 10;
-                    block.rep_target_max = 15;
-                } else if db_reps > 15 {
-                    block.tempo_cue = "Slow 3-4s lowering with 1s pause in stretch".to_string();
-                    block.rep_target_min = 8;
-                    block.rep_target_max = 12;
-                } else if db_reps < 8 {
-                    block.tempo_cue = "Controlled 2s negative, focus on form and control".to_string();
-                    block.rep_target_min = 6;
-                    block.rep_target_max = 10;
-                } else {
-                    block.tempo_cue = "Standard controlled 2-3s negative".to_string();
-                    block.rep_target_min = 8;
-                    block.rep_target_max = 15;
+        block.effort_target = crate::scheduler::effort_target_for_exercise(new_ex);
+        block.rest_cue = crate::scheduler::rest_cue_for_exercise(new_ex);
+
+        // Re-sort session blocks and re-align focus to guarantee compound-first ordering after swaps
+        crate::scheduler::sort_session_blocks(&mut sess.blocks, &exercises);
+        sess.focus.clear();
+        for b in &sess.blocks {
+            if let Some(e) = exercises.iter().find(|ex| ex.id == b.exercise_id) {
+                if !sess.focus.contains(&e.primary_muscle) {
+                    sess.focus.push(e.primary_muscle);
                 }
             }
         }
-    }
 
-    // Re-sort session blocks and re-align focus to guarantee compound-first ordering after swaps
-    crate::scheduler::sort_session_blocks(&mut session.blocks, &exercises);
-    session.focus.clear();
-    for b in &session.blocks {
-        if let Some(e) = exercises.iter().find(|ex| ex.id == b.exercise_id) {
-            if !session.focus.contains(&e.primary_muscle) {
-                session.focus.push(e.primary_muscle);
+        Ok(())
+    };
+
+    let session = plan
+        .sessions
+        .iter_mut()
+        .find(|s| s.session_number == session_number)
+        .ok_or_else(|| format!("Session {} not found", session_number))?;
+    mutate_session_block(session)?;
+    let updated_session = session.clone();
+
+    if plan.is_deload {
+        if let Some(ref mut pre_sessions) = plan.pre_deload_sessions {
+            if let Some(pre_sess) = pre_sessions.iter_mut().find(|s| s.session_number == session_number) {
+                mutate_session_block(pre_sess)?;
             }
         }
     }
 
-    let updated_session = session.clone();
     storage.save_plan(&plan)?;
 
     Ok(updated_session)
 }
 
-#[tauri::command]
-pub fn calibrate_dumbbell(app: tauri::AppHandle, reps: u32) -> Result<Profile, String> {
-    let storage = get_storage(&app)?;
-    let mut profile = storage.load_profile()?;
-    profile.dumbbell_calibrated_reps = Some(reps);
-    storage.save_profile(&profile)?;
 
-    // Regenerate plan with updated dumbbell cues and targets
-    let settings = storage.load_settings()?;
-    let exercises = load_embedded_exercises();
-    let existing_plan = storage.load_plan()?;
-    let (deficits, cumulative) = match existing_plan {
-        Some(p) => (p.maintenance_deficits, p.cumulative_effective_sets),
-        None => (HashMap::new(), HashMap::new()),
-    };
-
-    let plan = sched_generate_plan(&settings, &profile, &exercises, deficits, cumulative);
-    storage.save_plan(&plan)?;
-
-    Ok(profile)
-}
 
 #[tauri::command]
 pub fn log_set(
@@ -451,42 +425,9 @@ pub fn apply_progression(
                 block.seconds_target_min = None;
                 block.seconds_target_max = None;
             }
-            block.effort_target = "0-3 reps from failure".to_string();
+            block.effort_target = crate::scheduler::effort_target_for_exercise(new_ex);
             block.tempo_cue = "Controlled 2-3s negative".to_string();
-            block.rest_cue = match new_ex.ladder.as_str() {
-                "biceps"
-                | "triceps_stretch"
-                | "triceps_isolation"
-                | "forearms_isolation"
-                | "forearms_grip"
-                | "abs"
-                | "abs_floor" => "1-2 min between sets".to_string(),
-                _ => "2-3 min between sets".to_string(),
-            };
-
-            if new_ex.equipment.contains(&"dumbbell".to_string()) {
-                if let Ok(profile) = storage.load_profile() {
-                    if let Some(db_reps) = profile.dumbbell_calibrated_reps {
-                        if db_reps > 22 {
-                            block.tempo_cue = "Slow 3-4s lowering, pause in stretch, plus lengthened partials after failure".to_string();
-                            block.rep_target_min = 10;
-                            block.rep_target_max = 15;
-                        } else if db_reps > 15 {
-                            block.tempo_cue = "Slow 3-4s lowering with 1s pause in stretch".to_string();
-                            block.rep_target_min = 8;
-                            block.rep_target_max = 12;
-                        } else if db_reps < 8 {
-                            block.tempo_cue = "Controlled 2s negative, focus on form and control".to_string();
-                            block.rep_target_min = 6;
-                            block.rep_target_max = 10;
-                        } else {
-                            block.tempo_cue = "Standard controlled 2-3s negative".to_string();
-                            block.rep_target_min = 8;
-                            block.rep_target_max = 15;
-                        }
-                    }
-                }
-            }
+            block.rest_cue = crate::scheduler::rest_cue_for_exercise(new_ex);
 
             // Universal Exercise Sequencing (§6.4)
             crate::scheduler::sort_session_blocks(&mut sess.blocks, &exercises);
@@ -575,7 +516,15 @@ pub fn complete_session(
             );
 
             let is_deload = plan.as_ref().map(|p| p.is_deload).unwrap_or(false);
-            if !is_deload && crate::progression::detect_stall_from_all_logs(&ex.id, &all_logs) {
+            let is_below_top_target = block_suggestion
+                .as_ref()
+                .map(|s| s.action == "add_reps")
+                .unwrap_or(true);
+
+            if !is_deload
+                && is_below_top_target
+                && crate::progression::detect_stall_from_all_logs(&ex.id, &all_logs)
+            {
                 let next_ex = ex.harder_id.clone().or_else(|| ex.easier_id.clone());
                 block_suggestion = Some(ProgressionSuggestion {
                     session_number: session.session_number,
@@ -727,6 +676,7 @@ pub fn update_completed_session(
 
     // Update set logs: purge sets matching session number within 12h of either new or old timestamp
     let mut all_logs = storage.load_set_logs()?;
+    let mut removed_logs: Vec<SetLog> = Vec::new();
     all_logs.retain(|l| {
         let matches_new = l.session_number == session.session_number
             && (l.timestamp - session.timestamp).abs() < 43_200_000;
@@ -736,7 +686,11 @@ pub fn update_completed_session(
         } else {
             false
         };
-        !(matches_new || matches_old)
+        let should_remove = matches_new || matches_old;
+        if should_remove {
+            removed_logs.push(l.clone());
+        }
+        !should_remove
     });
     for s in &sets {
         all_logs.push(s.clone());
@@ -744,6 +698,7 @@ pub fn update_completed_session(
     storage.save_set_logs(&all_logs)?;
 
     if let Ok(mut profile) = storage.load_profile() {
+        crate::progression::rebuild_profile_maxes_from_logs(&mut profile, &removed_logs, &all_logs);
         for s in &sets {
             update_profile_from_set(&mut profile, s);
         }
@@ -762,11 +717,21 @@ pub fn delete_completed_session(app: tauri::AppHandle, id: String) -> Result<(),
         storage.save_session_history(&history)?;
 
         let mut set_logs = storage.load_set_logs()?;
+        let mut removed_logs: Vec<SetLog> = Vec::new();
         set_logs.retain(|l| {
-            !(l.session_number == removed.session_number
-                && (l.timestamp - removed.timestamp).abs() < 43_200_000)
+            let should_remove = l.session_number == removed.session_number
+                && (l.timestamp - removed.timestamp).abs() < 43_200_000;
+            if should_remove {
+                removed_logs.push(l.clone());
+            }
+            !should_remove
         });
         storage.save_set_logs(&set_logs)?;
+
+        if let Ok(mut profile) = storage.load_profile() {
+            crate::progression::rebuild_profile_maxes_from_logs(&mut profile, &removed_logs, &set_logs);
+            let _ = storage.save_profile(&profile);
+        }
     }
     Ok(())
 }

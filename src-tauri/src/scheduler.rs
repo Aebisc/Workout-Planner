@@ -270,7 +270,31 @@ pub fn select_exercise_for_muscle<'a>(
     prefer_stretch: bool,
     session_index: usize,
     profile: &Profile,
+    settings: &Settings,
+) -> Option<&'a Exercise> {
+    select_exercise_for_session_block(
+        muscle,
+        exercises,
+        available_equipment,
+        prefer_stretch,
+        session_index,
+        profile,
+        settings,
+        &[],
+    )
+}
+
+/// Selects the best exercise for a session block, excluding exercises already scheduled in the
+/// same session where alternative eligible exercises exist for that muscle.
+pub fn select_exercise_for_session_block<'a>(
+    muscle: Muscle,
+    exercises: &'a [Exercise],
+    available_equipment: &[String],
+    prefer_stretch: bool,
+    session_index: usize,
+    profile: &Profile,
     _settings: &Settings,
+    used_in_session: &[String],
 ) -> Option<&'a Exercise> {
     let mut candidates: Vec<&'a Exercise> = exercises
         .iter()
@@ -321,12 +345,25 @@ pub fn select_exercise_for_muscle<'a>(
         return None;
     }
 
+    // Prefer candidates not yet scheduled in the current session
+    let unused_candidates: Vec<&'a Exercise> = candidates
+        .iter()
+        .filter(|e| !used_in_session.contains(&e.id))
+        .copied()
+        .collect();
+
+    let target_candidates = if !unused_candidates.is_empty() {
+        unused_candidates
+    } else {
+        candidates
+    };
+
     // Separate into suitability tiers based on estimated reps
     let mut in_target_window = Vec::new();
     let mut overflow_or_acceptable = Vec::new();
     let mut other_candidates = Vec::new();
 
-    for &cand in &candidates {
+    for &cand in &target_candidates {
         if let Some(&est_reps) = profile.estimated_max_reps.get(&cand.id) {
             if (8..=20).contains(&est_reps) {
                 in_target_window.push(cand);
@@ -350,14 +387,14 @@ pub fn select_exercise_for_muscle<'a>(
     } else if !other_candidates.is_empty() {
         other_candidates
     } else {
-        candidates.clone()
+        target_candidates.clone()
     };
 
     if prefer_stretch {
         if let Some(&stretch_ex) = pool.iter().find(|e| e.stretched_position) {
             return Some(stretch_ex);
         }
-        if let Some(&stretch_ex) = candidates.iter().find(|e| e.stretched_position) {
+        if let Some(&stretch_ex) = target_candidates.iter().find(|e| e.stretched_position) {
             return Some(stretch_ex);
         }
     }
@@ -429,6 +466,31 @@ pub fn calculate_backpack_weight(
     best_added
 }
 
+pub fn effort_target_for_exercise(ex: &Exercise) -> String {
+    match ex.movement_category() {
+        crate::models::MovementCategory::Compound => {
+            "1–2 RIR (0–1 RIR on final set)".to_string()
+        }
+        crate::models::MovementCategory::Isolation
+        | crate::models::MovementCategory::Core => {
+            "0–1 RIR (all sets close to failure)".to_string()
+        }
+    }
+}
+
+pub fn rest_cue_for_exercise(ex: &Exercise) -> String {
+    match ex.ladder.as_str() {
+        "biceps"
+        | "triceps_stretch"
+        | "triceps_isolation"
+        | "forearms_isolation"
+        | "forearms_grip"
+        | "abs"
+        | "abs_floor" => "1-2 min between sets".to_string(),
+        _ => "2-3 min between sets".to_string(),
+    }
+}
+
 /// Distributes allocated sets into sessions and exercise blocks.
 fn build_sessions(
     cycle: &Cycle,
@@ -451,7 +513,7 @@ fn build_sessions(
         } else {
             partition_sets_into_blocks(sets_per_session)
         };
-        let mut session_blocks = Vec::new();
+        let mut session_blocks: Vec<Block> = Vec::new();
         let mut session_focus = Vec::new();
 
         // Push / Pull alternation heuristic:
@@ -515,7 +577,9 @@ fn build_sessions(
                 }
 
                 let prefer_stretch = !stretched_covered.contains(&chosen_muscle);
-                if let Some(ex) = select_exercise_for_muscle(
+                let used_in_session: Vec<String> =
+                    session_blocks.iter().map(|b| b.exercise_id.clone()).collect();
+                if let Some(ex) = select_exercise_for_session_block(
                     chosen_muscle,
                     exercises,
                     available_eq,
@@ -523,92 +587,74 @@ fn build_sessions(
                     s_idx,
                     profile,
                     settings,
+                    &used_in_session,
                 ) {
                     if ex.stretched_position {
                         stretched_covered.insert(chosen_muscle);
                     }
-                    let est_reps = profile.estimated_max_reps.get(&ex.id).copied().unwrap_or(0);
-                    let added_kg = if settings.backpack && est_reps > 20 {
-                        calculate_backpack_weight(
-                            ex,
-                            est_reps,
-                            profile.body_weight_kg,
-                            settings.bed_height_cm,
-                        )
-                    } else {
-                        0.0
-                    };
 
-                    let (mut rep_min, mut rep_max, sec_min, sec_max) = if ex.time_based {
-                        (0, 0, Some(20), Some(60))
-                    } else if added_kg > 0.0 {
-                        (8, 12, None, None)
+                    if let Some(existing_block) = session_blocks.iter_mut().find(|b| b.exercise_id == ex.id) {
+                        existing_block.sets += sets_scheduled;
                     } else {
-                        (8, 15, None, None)
-                    };
+                        let est_reps = profile.estimated_max_reps.get(&ex.id).copied().unwrap_or(0);
+                        let added_kg = if settings.backpack && est_reps > 20 {
+                            calculate_backpack_weight(
+                                ex,
+                                est_reps,
+                                profile.body_weight_kg,
+                                settings.bed_height_cm,
+                            )
+                        } else {
+                            0.0
+                        };
 
-                    let mut tempo_cue = if !settings.backpack && est_reps > 20 {
-                        "Slow 3-4s lowering with 1s pause in stretch".to_string()
-                    } else {
-                        "Controlled 2-3s negative".to_string()
-                    };
+                        let (mut rep_min, mut rep_max, sec_min, sec_max) = if ex.time_based {
+                            (0, 0, Some(20), Some(60))
+                        } else if added_kg > 0.0 {
+                            (8, 12, None, None)
+                        } else {
+                            (8, 15, None, None)
+                        };
 
-                    // Adapt dumbbell work per Plan §3.5 & §4.2 based on first-use calibration
-                    if ex.equipment.contains(&"dumbbell".to_string()) {
-                        if let Some(db_reps) = profile.dumbbell_calibrated_reps {
-                            if db_reps > 22 {
+                        let mut tempo_cue = if !settings.backpack && est_reps > 20 {
+                            "Slow 3-4s lowering with 1s pause in stretch".to_string()
+                        } else {
+                            "Controlled 2-3s negative".to_string()
+                        };
+
+                        // Adapt dumbbell work based on trainee's estimated max reps on that specific exercise
+                        if ex.equipment.contains(&"dumbbell".to_string()) {
+                            if est_reps > 22 {
                                 tempo_cue = "Slow 3-4s lowering, pause in stretch, plus lengthened partials after failure".to_string();
                                 rep_min = 10;
                                 rep_max = 15;
-                            } else if db_reps > 15 {
+                            } else if est_reps > 15 {
                                 tempo_cue = "Slow 3-4s lowering with 1s pause in stretch".to_string();
                                 rep_min = 8;
                                 rep_max = 12;
-                            } else if db_reps < 8 {
+                            } else if est_reps > 0 && est_reps < 8 {
                                 tempo_cue = "Controlled 2s negative, focus on form and control".to_string();
                                 rep_min = 6;
                                 rep_max = 10;
-                            } else {
-                                tempo_cue = "Standard controlled 2-3s negative".to_string();
-                                rep_min = 8;
-                                rep_max = 15;
                             }
                         }
+
+                        let rest_cue = rest_cue_for_exercise(ex);
+                        let effort_target = effort_target_for_exercise(ex);
+
+                        session_blocks.push(Block {
+                            exercise_id: ex.id.clone(),
+                            sets: sets_scheduled,
+                            rep_target_min: rep_min,
+                            rep_target_max: rep_max,
+                            seconds_target_min: sec_min,
+                            seconds_target_max: sec_max,
+                            effort_target,
+                            tempo_cue,
+                            rest_cue,
+                            added_weight_kg: added_kg,
+                        });
                     }
-
-                    let rest_cue = match ex.ladder.as_str() {
-                        "biceps"
-                        | "triceps_stretch"
-                        | "triceps_isolation"
-                        | "forearms_isolation"
-                        | "forearms_grip"
-                        | "abs"
-                        | "abs_floor" => "1-2 min between sets".to_string(),
-                        _ => "2-3 min between sets".to_string(),
-                    };
-
-                    let effort_target = match ex.movement_category() {
-                        crate::models::MovementCategory::Compound => {
-                            "1–2 RIR (0–1 RIR on final set)".to_string()
-                        }
-                        crate::models::MovementCategory::Isolation
-                        | crate::models::MovementCategory::Core => {
-                            "0–1 RIR (all sets close to failure)".to_string()
-                        }
-                    };
-
-                    session_blocks.push(Block {
-                        exercise_id: ex.id.clone(),
-                        sets: sets_scheduled,
-                        rep_target_min: rep_min,
-                        rep_target_max: rep_max,
-                        seconds_target_min: sec_min,
-                        seconds_target_max: sec_max,
-                        effort_target,
-                        tempo_cue,
-                        rest_cue,
-                        added_weight_kg: added_kg,
-                    });
                 }
             }
         }
