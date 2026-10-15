@@ -99,7 +99,8 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
 
   // Cycle Anchor Date & Dynamic Rest Day Positioning
   let effectiveAnchorKey = anchorKey || localStorage.getItem('mgp_cycle_anchor_date');
-  if (!effectiveAnchorKey) {
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!effectiveAnchorKey || !dateRegex.test(effectiveAnchorKey)) {
     if (history.length > 0) {
       const earliestTs = Math.min(...history.map((s) => s.timestamp));
       const d = new Date(earliestTs);
@@ -114,7 +115,7 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
   }
 
   const [aY, aM, aD] = effectiveAnchorKey.split('-').map(Number);
-  const anchorMidnight = new Date(aY, aM - 1, aD, 0, 0, 0, 0);
+  const anchorMidnight = new Date(aY, (aM || 1) - 1, aD || 1, 0, 0, 0, 0);
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
 

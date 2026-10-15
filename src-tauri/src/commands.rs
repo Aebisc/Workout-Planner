@@ -625,15 +625,32 @@ pub fn get_session_history(app: tauri::AppHandle) -> Result<Vec<CompletedSession
     let mut history = storage.load_session_history()?;
 
     if history.is_empty() {
-        let set_logs = storage.load_set_logs()?;
+        let mut set_logs = storage.load_set_logs()?;
         if !set_logs.is_empty() {
+            set_logs.sort_by_key(|l| l.timestamp);
             let exercises = load_embedded_exercises();
-            let mut by_session: HashMap<u32, Vec<SetLog>> = HashMap::new();
+
+            // Cluster sets into individual workout sessions by session_number and 12-hour window
+            let mut session_clusters: Vec<Vec<SetLog>> = Vec::new();
             for log in set_logs {
-                by_session.entry(log.session_number).or_default().push(log);
+                let found_cluster = session_clusters.iter_mut().find(|cluster| {
+                    if let Some(first) = cluster.first() {
+                        first.session_number == log.session_number
+                            && (log.timestamp - first.timestamp).abs() < 43_200_000
+                    } else {
+                        false
+                    }
+                });
+                if let Some(cluster) = found_cluster {
+                    cluster.push(log);
+                } else {
+                    session_clusters.push(vec![log]);
+                }
             }
-            for (sess_num, s_logs) in by_session {
+
+            for s_logs in session_clusters {
                 let earliest_ts = s_logs.iter().map(|l| l.timestamp).min().unwrap_or(0);
+                let sess_num = s_logs.first().map(|l| l.session_number).unwrap_or(1);
                 let mut ex_map: HashMap<String, Vec<SetLog>> = HashMap::new();
                 for log in &s_logs {
                     ex_map.entry(log.exercise_id.clone()).or_default().push(log.clone());
@@ -666,7 +683,7 @@ pub fn get_session_history(app: tauri::AppHandle) -> Result<Vec<CompletedSession
                     });
                 }
                 history.push(CompletedSession {
-                    id: format!("legacy-{}", sess_num),
+                    id: format!("legacy-{}-{}", sess_num, earliest_ts),
                     timestamp: earliest_ts,
                     session_number: sess_num,
                     focus,
@@ -674,10 +691,10 @@ pub fn get_session_history(app: tauri::AppHandle) -> Result<Vec<CompletedSession
                     exercises_summary,
                 });
             }
-            history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            history.sort_by_key(|a| std::cmp::Reverse(a.timestamp));
         }
     } else {
-        history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        history.sort_by_key(|a| std::cmp::Reverse(a.timestamp));
     }
 
     Ok(history)
@@ -692,23 +709,34 @@ pub fn update_completed_session(
     let storage = get_storage(&app)?;
     let mut history = storage.load_session_history()?;
 
+    let mut old_timestamp: Option<i64> = None;
+
     if let Some(pos) = history.iter().position(|s| s.id == session.id) {
+        old_timestamp = Some(history[pos].timestamp);
         history[pos] = session.clone();
     } else if let Some(pos) = history.iter().position(|s| {
         s.session_number == session.session_number
-            && (s.timestamp as i64 - session.timestamp as i64).abs() < 43_200_000
+            && (s.timestamp - session.timestamp).abs() < 43_200_000
     }) {
+        old_timestamp = Some(history[pos].timestamp);
         history[pos] = session.clone();
     } else {
         history.push(session.clone());
     }
     storage.save_session_history(&history)?;
 
-    // Update set logs
+    // Update set logs: purge sets matching session number within 12h of either new or old timestamp
     let mut all_logs = storage.load_set_logs()?;
     all_logs.retain(|l| {
-        !(l.session_number == session.session_number
-            && (l.timestamp as i64 - session.timestamp as i64).abs() < 43_200_000)
+        let matches_new = l.session_number == session.session_number
+            && (l.timestamp - session.timestamp).abs() < 43_200_000;
+        let matches_old = if let Some(old_ts) = old_timestamp {
+            l.session_number == session.session_number
+                && (l.timestamp - old_ts).abs() < 43_200_000
+        } else {
+            false
+        };
+        !(matches_new || matches_old)
     });
     for s in &sets {
         all_logs.push(s.clone());
@@ -736,7 +764,7 @@ pub fn delete_completed_session(app: tauri::AppHandle, id: String) -> Result<(),
         let mut set_logs = storage.load_set_logs()?;
         set_logs.retain(|l| {
             !(l.session_number == removed.session_number
-                && (l.timestamp as i64 - removed.timestamp as i64).abs() < 43_200_000)
+                && (l.timestamp - removed.timestamp).abs() < 43_200_000)
         });
         storage.save_set_logs(&set_logs)?;
     }

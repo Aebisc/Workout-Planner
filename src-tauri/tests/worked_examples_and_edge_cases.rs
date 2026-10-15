@@ -533,3 +533,184 @@ fn test_apply_progression_preserves_set_volume_and_reorders() {
     assert_eq!(session.blocks[0].exercise_id, "feet_elevated_push_up");
 }
 
+#[test]
+fn test_history_fallback_clustering_multi_week() {
+    use muscle_growth_planner_lib::models::SetLog;
+
+    // Simulate 2 distinct workouts across different weeks with session_number = 1
+    let ts_week_1 = 1_000_000_000_000_i64;
+    let ts_week_2 = ts_week_1 + 7 * 86_400_000;
+
+    let mut set_logs = vec![
+        SetLog {
+            timestamp: ts_week_1,
+            session_number: 1,
+            block_index: 0,
+            exercise_id: "push_up".to_string(),
+            reps_or_seconds: 15,
+            added_weight_kg: 0.0,
+            reps_from_failure: 2,
+        },
+        SetLog {
+            timestamp: ts_week_1 + 180_000,
+            session_number: 1,
+            block_index: 0,
+            exercise_id: "push_up".to_string(),
+            reps_or_seconds: 14,
+            added_weight_kg: 0.0,
+            reps_from_failure: 1,
+        },
+        SetLog {
+            timestamp: ts_week_2,
+            session_number: 1,
+            block_index: 0,
+            exercise_id: "push_up".to_string(),
+            reps_or_seconds: 16,
+            added_weight_kg: 0.0,
+            reps_from_failure: 2,
+        },
+    ];
+
+    set_logs.sort_by_key(|l| l.timestamp);
+
+    let mut session_clusters: Vec<Vec<SetLog>> = Vec::new();
+    for log in set_logs {
+        let found_cluster = session_clusters.iter_mut().find(|cluster| {
+            if let Some(first) = cluster.first() {
+                first.session_number == log.session_number
+                    && (log.timestamp - first.timestamp).abs() < 43_200_000
+            } else {
+                false
+            }
+        });
+        if let Some(cluster) = found_cluster {
+            cluster.push(log);
+        } else {
+            session_clusters.push(vec![log]);
+        }
+    }
+
+    assert_eq!(session_clusters.len(), 2, "Expected 2 distinct session clusters across 2 weeks");
+    assert_eq!(session_clusters[0].len(), 2, "Week 1 cluster should have 2 sets");
+    assert_eq!(session_clusters[1].len(), 1, "Week 2 cluster should have 1 set");
+}
+
+#[test]
+fn test_update_completed_session_purges_old_timestamp_sets() {
+    use muscle_growth_planner_lib::models::SetLog;
+
+    let ts_old = 1_000_000_000_000_i64;
+    let ts_new = ts_old + 2 * 86_400_000; // shifted by 2 days
+
+    let mut all_logs = vec![
+        SetLog {
+            timestamp: ts_old,
+            session_number: 1,
+            block_index: 0,
+            exercise_id: "push_up".to_string(),
+            reps_or_seconds: 12,
+            added_weight_kg: 0.0,
+            reps_from_failure: 2,
+        },
+    ];
+
+    let old_timestamp = Some(ts_old);
+    let session_timestamp = ts_new;
+    let session_number = 1;
+
+    all_logs.retain(|l| {
+        let matches_new = l.session_number == session_number
+            && (l.timestamp - session_timestamp).abs() < 43_200_000;
+        let matches_old = if let Some(old_ts) = old_timestamp {
+            l.session_number == session_number
+                && (l.timestamp - old_ts).abs() < 43_200_000
+        } else {
+            false
+        };
+        !(matches_new || matches_old)
+    });
+
+    assert!(all_logs.is_empty(), "Old sets from shifted date must be successfully purged");
+}
+
+#[test]
+fn test_average_reps_increase_across_sets_counts_as_progress() {
+    use muscle_growth_planner_lib::models::SetLog;
+
+    // Trainee achieves 10 reps on top set in all 3 sessions,
+    // but increases work capacity on subsequent sets:
+    // Session 1: 10, 8, 8 -> avg 8.67
+    // Session 2: 10, 9, 8 -> avg 9.00
+    // Session 3: 10, 9, 9 -> avg 9.33
+    let s1 = vec![
+        SetLog { timestamp: 100, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 101, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 102, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+    let s2 = vec![
+        SetLog { timestamp: 200, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 201, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 202, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+    let s3 = vec![
+        SetLog { timestamp: 300, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 301, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 302, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+
+    let history = vec![s1, s2, s3];
+    assert!(
+        !detect_stall("pull_up", &history),
+        "Average reps increased (8.67 -> 9.33) despite top set staying at 10; must count as progress!"
+    );
+}
+
+#[test]
+fn test_stall_detected_independently_per_exercise() {
+    use muscle_growth_planner_lib::models::SetLog;
+
+    let day = 86_400_000_i64;
+    let base = 1_700_000_000_000_i64;
+
+    // Pull-ups progressing: 8 -> 9 -> 10 reps
+    // Bicep curls stalled: 12 -> 12 -> 12 reps
+    let logs = vec![
+        // Day 1
+        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + 1000, session_number: 1, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
+        // Day 2
+        SetLog { timestamp: base + day, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + day + 1000, session_number: 2, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
+        // Day 3
+        SetLog { timestamp: base + 2 * day, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + 2 * day + 1000, session_number: 3, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
+    ];
+
+    assert!(!detect_stall_from_all_logs("pull_up", &logs), "Pull-up is progressing, must not stall");
+    assert!(detect_stall_from_all_logs("db_curl", &logs), "Bicep curl is flat across 3 sessions, must stall");
+}
+
+#[test]
+fn test_load_increase_prevents_false_stall() {
+    use muscle_growth_planner_lib::models::SetLog;
+
+    let day = 86_400_000_i64;
+    let base = 1_700_000_000_000_i64;
+
+    // Day 1: 12 reps at bodyweight (0kg)
+    // Day 2: Added 2.5kg backpack -> reps drop to 8 (expected due to heavier load)
+    // Day 3: 2.5kg backpack -> 9 reps
+    let logs = vec![
+        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + day, session_number: 2, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 8, added_weight_kg: 2.5, reps_from_failure: 1 },
+        SetLog { timestamp: base + 2 * day, session_number: 3, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 9, added_weight_kg: 2.5, reps_from_failure: 1 },
+    ];
+
+    assert!(
+        !detect_stall_from_all_logs("push_up", &logs),
+        "Load increased from 0kg to 2.5kg; must not be flagged as a stall"
+    );
+}
+
+
+

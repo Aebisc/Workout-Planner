@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { CalibrationAnswers, ExperienceLevel, Units } from '../types';
 import { formatBackpackLoad, KG_TO_LB, CM_TO_IN } from '../utils/units';
@@ -21,6 +21,21 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
     startingPush: string;
     addedWeight: number;
   } | null>(null);
+
+  useEffect(() => {
+    api.getSettings().then((s) => {
+      if (s) {
+        if (s.units && s.units !== 'metric') {
+          setUnits(s.units);
+          setWeight(Math.round(75 * KG_TO_LB));
+          setBedHeight(Math.round(50 * CM_TO_IN));
+        }
+        if (s.experience) {
+          setExperience(s.experience);
+        }
+      }
+    }).catch(console.error);
+  }, []);
 
   const handleUnitsChange = (newUnits: Units) => {
     if (newUnits !== units) {
@@ -53,6 +68,13 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
     };
 
     try {
+      const currentSettings = await api.getSettings();
+      await api.updateSettings({
+        ...currentSettings,
+        units,
+        experience,
+      });
+
       const [, startingPush, addedWeight] = await api.calibrate(answers);
       setResult({ startingPush, addedWeight });
     } catch (err) {

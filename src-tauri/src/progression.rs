@@ -176,62 +176,65 @@ pub fn detect_stall_from_all_logs(exercise_id: &str, all_logs: &[SetLog]) -> boo
     }
 
     let last_three = &exposures[exposures.len() - 3..];
-
-    // Check if added load increased across the exposures (0 is oldest, 2 is newest)
-    let w0 = last_three[2]
-        .iter()
-        .map(|l| (l.added_weight_kg * 1000.0).round() as i64)
-        .max()
-        .unwrap_or(0);
-    let w1 = last_three[1]
-        .iter()
-        .map(|l| (l.added_weight_kg * 1000.0).round() as i64)
-        .max()
-        .unwrap_or(0);
-    let w2 = last_three[0]
-        .iter()
-        .map(|l| (l.added_weight_kg * 1000.0).round() as i64)
-        .max()
-        .unwrap_or(0);
-
-    if w0 > w1 || w1 > w2 {
-        return false;
-    }
-
     detect_stall(exercise_id, last_three)
 }
 
-/// Detects stall: 3 consecutive exposures to an exercise without rep or load progress.
+/// Detects stall: 3 consecutive exposures to an exercise without rep, time, or load progress.
+/// Evaluates average reps or seconds across all hard sets (reps_from_failure <= 3).
+/// If the average of the most recent session has not increased compared to the first (oldest) session
+/// in the 3-session window (at the same or lower load), a stall is detected.
 pub fn detect_stall(exercise_id: &str, session_logs: &[Vec<SetLog>]) -> bool {
     if session_logs.len() < 3 {
         return false;
     }
 
-    let mut session_best_reps = Vec::new();
+    let mut session_averages = Vec::new();
+    let mut session_max_weights = Vec::new();
+
+    // Iterate through the 3 most recent sessions (rev().take(3))
+    // Index 0: most recent, Index 1: middle, Index 2: oldest
     for logs in session_logs.iter().rev().take(3) {
-        let best = logs
+        let hard_sets: Vec<&SetLog> = logs
             .iter()
             .filter(|l| l.exercise_id == exercise_id && l.reps_from_failure <= 3)
-            .map(|l| l.reps_or_seconds)
-            .max();
+            .collect();
 
-        if let Some(reps) = best {
-            session_best_reps.push(reps);
-        } else {
+        if hard_sets.is_empty() {
             return false;
         }
+
+        let total_reps: u32 = hard_sets.iter().map(|l| l.reps_or_seconds).sum();
+        let avg_reps = total_reps as f64 / hard_sets.len() as f64;
+        let max_weight = hard_sets
+            .iter()
+            .map(|l| (l.added_weight_kg * 1000.0).round() as i64)
+            .max()
+            .unwrap_or(0);
+
+        session_averages.push(avg_reps);
+        session_max_weights.push(max_weight);
     }
 
-    if session_best_reps.len() < 3 {
+    if session_averages.len() < 3 {
         return false;
     }
 
-    // Stall if no increase in best reps across last 3 sessions
-    let r0 = session_best_reps[0]; // most recent
-    let r1 = session_best_reps[1];
-    let r2 = session_best_reps[2]; // oldest
+    let a_recent = session_averages[0]; // most recent
+    let _a_mid = session_averages[1];   // middle
+    let a_old = session_averages[2];    // oldest (first of the 3 exposures)
 
-    r0 <= r1 && r1 <= r2
+    let w_recent = session_max_weights[0];
+    let w_mid = session_max_weights[1];
+    let w_old = session_max_weights[2];
+
+    // If load increased at any point across the 3 exposures, that is progression via load
+    if w_recent > w_mid || w_mid > w_old {
+        return false;
+    }
+
+    // Stall if the most recent average failed to improve over the first session's average
+    // A small epsilon (1e-4) avoids floating point precision issues
+    a_recent <= a_old + 1e-4
 }
 
 /// Applies a lighter cycle (deload):

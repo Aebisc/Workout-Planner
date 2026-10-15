@@ -62,14 +62,29 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
           );
 
           if (sessionLogs.length > 0) {
-            // Group by exercise_id
+            // Sort by block_index first so sets appear in correct sequence
+            sessionLogs.sort((a, b) => a.block_index - b.block_index);
+
+            // Group by exercise_id while recording block appearance order
             const grouped: Record<string, SetLog[]> = {};
+            const exerciseOrder: string[] = [];
             sessionLogs.forEach((l) => {
-              if (!grouped[l.exercise_id]) grouped[l.exercise_id] = [];
+              if (!grouped[l.exercise_id]) {
+                grouped[l.exercise_id] = [];
+                exerciseOrder.push(l.exercise_id);
+              }
               grouped[l.exercise_id].push(l);
             });
 
-            const forms: ExerciseFormState[] = Object.entries(grouped).map(([exId, logs]) => {
+            // Prefer sequence from sessionToEdit.exercises_summary, then any additional exercises
+            const summaryOrder = sessionToEdit.exercises_summary.map((s) => s.exercise_id);
+            const orderedIds = [
+              ...summaryOrder.filter((id) => grouped[id]),
+              ...exerciseOrder.filter((id) => !summaryOrder.includes(id)),
+            ];
+
+            const forms: ExerciseFormState[] = orderedIds.map((exId) => {
+              const logs = grouped[exId];
               const summary = sessionToEdit.exercises_summary.find((s) => s.exercise_id === exId);
               return {
                 exercise_id: exId,
