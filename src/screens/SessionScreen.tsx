@@ -12,6 +12,11 @@ import {
   Settings,
 } from '../types';
 import { formatBackpackLoad } from '../utils/units';
+import {
+  formatTimerMMSS,
+  getOptimalRestSeconds,
+  playRestCompleteChime,
+} from '../utils/restTimer';
 
 interface SessionScreenProps {
   sessionNumber: number;
@@ -27,6 +32,26 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
   const [session, setSession] = useState<Session | null>(null);
   const [exercises, setExercises] = useState<Record<string, Exercise>>({});
   const [loading, setLoading] = useState<boolean>(true);
+
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(
+    settings.rest_timer_sound ?? true
+  );
+
+  useEffect(() => {
+    setSoundEnabled(settings.rest_timer_sound ?? true);
+  }, [settings.rest_timer_sound]);
+
+  const [restTimer, setRestTimer] = useState<{
+    isActive: boolean;
+    isFinished: boolean;
+    blockIndex: number;
+    exerciseName: string;
+    totalSeconds: number;
+    remainingSeconds: number;
+    endTimeMs: number;
+    label: string;
+    reason: string;
+  } | null>(null);
 
   // Active workout session's sets: Record<blockIndex, SetLog[]>
   const [currentSessionSets, setCurrentSessionSets] = useState<Record<number, SetLog[]>>(() => {
@@ -58,6 +83,60 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
 
   // Finishing session state
   const [submittingSession, setSubmittingSession] = useState<boolean>(false);
+
+  // Drift-free countdown timer effect
+  useEffect(() => {
+    if (!restTimer || !restTimer.isActive) return;
+
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      const remaining = Math.max(0, Math.ceil((restTimer.endTimeMs - now) / 1000));
+
+      if (remaining <= 0) {
+        playRestCompleteChime(soundEnabled);
+        setRestTimer((prev) =>
+          prev
+            ? {
+                ...prev,
+                isActive: false,
+                isFinished: true,
+                remainingSeconds: 0,
+              }
+            : null
+        );
+      } else {
+        setRestTimer((prev) =>
+          prev ? { ...prev, remainingSeconds: remaining } : null
+        );
+      }
+    }, 250);
+
+    return () => window.clearInterval(interval);
+  }, [restTimer?.isActive, restTimer?.endTimeMs, soundEnabled]);
+
+  const handleAdjustRestTimer = (deltaSeconds: number) => {
+    setRestTimer((prev) => {
+      if (!prev) return null;
+      const now = Date.now();
+      const currentRem = prev.isActive
+        ? Math.max(0, Math.ceil((prev.endTimeMs - now) / 1000))
+        : prev.remainingSeconds;
+      const nextRem = Math.max(5, currentRem + deltaSeconds);
+      const nextTotal = Math.max(prev.totalSeconds, nextRem);
+      return {
+        ...prev,
+        isActive: true,
+        isFinished: false,
+        totalSeconds: nextTotal,
+        remainingSeconds: nextRem,
+        endTimeMs: now + nextRem * 1000,
+      };
+    });
+  };
+
+  const handleDismissRestTimer = () => {
+    setRestTimer(null);
+  };
   const [sessionCompletedSummary, setSessionCompletedSummary] = useState<{
     completedSession: CompletedSession;
     suggestions: ProgressionSuggestion[];
@@ -124,6 +203,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
   const handleAddSet = (blockIndex: number, exerciseId: string) => {
     const input = activeInput[blockIndex] || { reps: 10, rir: 2 };
     const block = session?.blocks[blockIndex];
+    const ex = exercises[exerciseId];
 
     const newLog: SetLog = {
       timestamp: Date.now(),
@@ -138,6 +218,20 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
     setCurrentSessionSets((prev) => {
       const existing = prev[blockIndex] || [];
       return { ...prev, [blockIndex]: [...existing, newLog] };
+    });
+
+    const rec = getOptimalRestSeconds(ex, block, input.rir);
+    const exName = ex ? ex.name : exerciseId.replace(/_/g, ' ');
+    setRestTimer({
+      isActive: true,
+      isFinished: false,
+      blockIndex,
+      exerciseName: exName,
+      totalSeconds: rec.seconds,
+      remainingSeconds: rec.seconds,
+      endTimeMs: Date.now() + rec.seconds * 1000,
+      label: rec.label,
+      reason: rec.reason,
     });
   };
 
@@ -197,6 +291,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
         console.error('Failed to remove active session from sessionStorage', e);
       }
       setCurrentSessionSets({});
+      setRestTimer(null);
 
       setSessionCompletedSummary({
         completedSession,
@@ -312,6 +407,90 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Active Hypertrophy Rest Timer Banner */}
+      {restTimer && (
+        <div
+          className={`card rest-timer-banner ${
+            restTimer.isFinished ? 'rest-timer-finished' : ''
+          }`}
+        >
+          <div className="rest-timer-main">
+            <div className="rest-timer-clock-wrap">
+              <span className="rest-timer-icon">
+                {restTimer.isFinished ? '🔔' : '⏱️'}
+              </span>
+              <span className="rest-timer-digits">
+                {formatTimerMMSS(restTimer.remainingSeconds)}
+              </span>
+            </div>
+
+            <div className="rest-timer-info">
+              <div className="rest-timer-title-row">
+                <strong>{restTimer.exerciseName}</strong>
+                <span className="badge badge-primary">{restTimer.label}</span>
+              </div>
+              <p className="rest-timer-reason">
+                {restTimer.isFinished
+                  ? 'Recovery complete! You are ready for your next hard set.'
+                  : restTimer.reason}
+              </p>
+            </div>
+
+            <div className="rest-timer-actions">
+              <button
+                type="button"
+                className="btn btn-outline btn-xs"
+                onClick={() => setSoundEnabled((prev) => !prev)}
+                title={soundEnabled ? 'Mute timer chime' : 'Unmute timer chime'}
+              >
+                {soundEnabled ? '🔊' : '🔇'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline btn-xs"
+                onClick={() => handleAdjustRestTimer(-15)}
+                title="Subtract 15 seconds"
+              >
+                -15s
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline btn-xs"
+                onClick={() => handleAdjustRestTimer(15)}
+                title="Add 15 seconds"
+              >
+                +15s
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-xs"
+                onClick={handleDismissRestTimer}
+              >
+                {restTimer.isFinished ? 'Dismiss' : 'Skip Rest'}
+              </button>
+            </div>
+          </div>
+
+          <div className="rest-timer-progress-track">
+            <div
+              className="rest-timer-progress-fill"
+              style={{
+                width: `${
+                  restTimer.totalSeconds > 0
+                    ? Math.min(
+                        100,
+                        ((restTimer.totalSeconds - restTimer.remainingSeconds) /
+                          restTimer.totalSeconds) *
+                          100
+                      )
+                    : 100
+                }%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="blocks-list">
         {session.blocks.map((block, bIdx) => {

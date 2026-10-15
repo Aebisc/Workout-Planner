@@ -2865,6 +2865,106 @@ input:checked + .slider:before {
   border-color: #ef4444;
 }
 
+/* ==========================================================================
+   Hypertrophy Rest Timer Banner
+   ========================================================================== */
+.rest-timer-banner {
+  position: sticky;
+  top: 72px;
+  z-index: 40;
+  padding: 1rem 1.35rem;
+  margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(30, 41, 69, 0.95) 100%);
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.7), 0 0 22px rgba(99, 102, 241, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.rest-timer-banner.rest-timer-finished {
+  border-color: rgba(16, 185, 129, 0.6);
+  background: linear-gradient(135deg, rgba(6, 78, 59, 0.92) 0%, rgba(15, 23, 42, 0.95) 100%);
+  box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.7), 0 0 25px rgba(16, 185, 129, 0.3);
+}
+
+.rest-timer-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.rest-timer-clock-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: rgba(9, 13, 22, 0.65);
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rest-timer-icon {
+  font-size: 1.25rem;
+}
+
+.rest-timer-digits {
+  font-size: 1.65rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--text-white);
+}
+
+.rest-timer-finished .rest-timer-digits {
+  color: #34d399;
+}
+
+.rest-timer-info {
+  flex: 1;
+  min-width: 220px;
+}
+
+.rest-timer-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.2rem;
+}
+
+.rest-timer-reason {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.rest-timer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.rest-timer-progress-track {
+  width: 100%;
+  height: 5px;
+  background: rgba(15, 23, 42, 0.85);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-top: 0.85rem;
+}
+
+.rest-timer-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #06b6d4);
+  transition: width 0.25s linear;
+}
+
+.rest-timer-finished .rest-timer-progress-fill {
+  background: #10b981;
+}
+
+
 
 
 

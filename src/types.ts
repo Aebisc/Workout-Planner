@@ -47,6 +47,7 @@ export interface Settings {
   sets_per_day: number;
   days_per_week: number;
   calendar_view: boolean;
+  rest_timer_sound?: boolean;
 }
 
 export interface CalibrationAnswers {

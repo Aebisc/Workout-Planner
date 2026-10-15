@@ -154,6 +154,10 @@ impl Exercise {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub units: Units,
@@ -165,6 +169,8 @@ pub struct Settings {
     pub sets_per_day: u32,
     pub days_per_week: f64,
     pub calendar_view: bool,
+    #[serde(default = "default_true")]
+    pub rest_timer_sound: bool,
 }
 
 impl Default for Settings {
@@ -179,6 +185,7 @@ impl Default for Settings {
             sets_per_day: 4,
             days_per_week: 3.5,
             calendar_view: false,
+            rest_timer_sound: true,
         }
     }
 }
@@ -373,5 +380,22 @@ mod tests {
         assert_eq!(serde_json::to_string(&ExperienceLevel::Under6Months).unwrap(), "\"under_6_months\"");
         assert_eq!(serde_json::to_string(&ExperienceLevel::SixTo24Months).unwrap(), "\"six_to_24_months\"");
         assert_eq!(serde_json::to_string(&ExperienceLevel::Over2Years).unwrap(), "\"over_2_years\"");
+    }
+
+    #[test]
+    fn test_legacy_settings_deserialization_defaults_rest_timer_sound() {
+        let legacy_json = r#"{
+            "units": "metric",
+            "backpack": false,
+            "bed_height_cm": 50.0,
+            "priority_muscles": ["chest"],
+            "maintenance_on": true,
+            "experience": "six_to_24_months",
+            "sets_per_day": 4,
+            "days_per_week": 3.5,
+            "calendar_view": false
+        }"#;
+        let settings: Settings = serde_json::from_str(legacy_json).expect("Legacy settings JSON should deserialize");
+        assert!(settings.rest_timer_sound, "rest_timer_sound should default to true for legacy settings");
     }
 }

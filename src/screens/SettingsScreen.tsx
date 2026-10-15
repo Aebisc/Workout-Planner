@@ -33,6 +33,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [calendarView, setCalendarView] = useState<boolean>(
     initialSettings.calendar_view
   );
+  const [restTimerSound, setRestTimerSound] = useState<boolean>(
+    initialSettings.rest_timer_sound ?? true
+  );
 
   const [saving, setSaving] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -97,6 +100,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       sets_per_day: setsPerDay,
       days_per_week: daysPerWeek,
       calendar_view: calendarView,
+      rest_timer_sound: restTimerSound,
     };
 
     try {
@@ -265,6 +269,25 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               {calendarView
                 ? 'Calendar mode (maps sessions to weekdays)'
                 : 'Sequential queue (rolling Session N order, independent of weekdays)'}
+            </span>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>Rest Timer Completion Sound</label>
+          <div className="toggle-container">
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={restTimerSound}
+                onChange={(e) => setRestTimerSound(e.target.checked)}
+              />
+              <span className="slider"></span>
+            </label>
+            <span className="toggle-label">
+              {restTimerSound
+                ? 'Unmuted (plays a gentle audio chime when your rest timer reaches 0:00)'
+                : 'Muted (visual countdown only, no audio chime)'}
             </span>
           </div>
         </div>
