@@ -1,5 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CompletedSession, Plan } from '../types';
+import {
+  buildCyclePattern,
+  deriveCycleAnchorFromHistory,
+  formatDateDisplay,
+  toLocalDateKey,
+} from '../utils/cycle';
 
 interface CycleCalibrationModalProps {
   isOpen: boolean;
@@ -7,27 +13,8 @@ interface CycleCalibrationModalProps {
   plan: Plan;
   currentAnchorDate: string; // YYYY-MM-DD
   history?: CompletedSession[];
-  onSaveAnchorDate: (newDate: string) => void;
+  onSaveAnchorDate: (newDate: string, isManual?: boolean) => void;
   onOpenEditSession?: (session: CompletedSession | null, dateKey?: string, sessionNum?: number) => void;
-}
-
-function toLocalDateKey(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function formatDateDisplay(dateStr: string): string {
-  if (!dateStr) return '';
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const date = new Date(y, (m || 1) - 1, d || 1);
-  return date.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
 }
 
 export const CycleCalibrationModal: React.FC<CycleCalibrationModalProps> = ({
@@ -50,21 +37,25 @@ export const CycleCalibrationModal: React.FC<CycleCalibrationModalProps> = ({
   const [anchorInput, setAnchorInput] = useState<string>(currentAnchorDate || todayKey);
   const [savedStatus, setSavedStatus] = useState<boolean>(false);
 
+  useEffect(() => {
+    if (isOpen && currentAnchorDate) {
+      setAnchorInput(currentAnchorDate);
+    }
+  }, [isOpen, currentAnchorDate]);
+
   // Cycle dimensions
   const L = Math.max(1, plan.cycle.length_days);
-  const S = plan.cycle.sessions_count;
 
   // Build cycle pattern array (length L)
   const cyclePattern = useMemo(() => {
-    const pattern: Array<typeof plan.sessions[0] | null> = Array(L).fill(null);
-    if (S > 0) {
-      plan.sessions.forEach((sess, sIdx) => {
-        const dayIndex = Math.floor((sIdx * L) / S);
-        pattern[dayIndex] = sess;
-      });
-    }
-    return pattern;
-  }, [plan.sessions, L, S]);
+    return buildCyclePattern(plan);
+  }, [plan]);
+
+  // Derive anchor from workout history if available
+  const derivedHistoryAnchor = useMemo(() => {
+    if (!history || history.length === 0) return null;
+    return deriveCycleAnchorFromHistory(history, cyclePattern);
+  }, [history, cyclePattern]);
 
   // Derive preview based on currently selected anchorInput
   const { todayCycleDay, todaySession, previewDays, daysFromToday } = useMemo(() => {
@@ -107,6 +98,16 @@ export const CycleCalibrationModal: React.FC<CycleCalibrationModalProps> = ({
 
   // Quick preset options
   const presets = [
+    ...(derivedHistoryAnchor
+      ? [
+          {
+            label: 'Auto-Sync',
+            sub: 'From logged workouts',
+            getKey: () => derivedHistoryAnchor,
+            isAuto: true,
+          },
+        ]
+      : []),
     {
       label: 'Today',
       sub: 'Day 1 is Today',
@@ -145,7 +146,8 @@ export const CycleCalibrationModal: React.FC<CycleCalibrationModalProps> = ({
 
   const handleApply = () => {
     if (!anchorInput) return;
-    onSaveAnchorDate(anchorInput);
+    const isAuto = Boolean(derivedHistoryAnchor && anchorInput === derivedHistoryAnchor);
+    onSaveAnchorDate(anchorInput, !isAuto);
     setSavedStatus(true);
     setTimeout(() => {
       setSavedStatus(false);

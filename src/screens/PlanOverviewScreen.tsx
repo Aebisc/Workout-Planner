@@ -3,6 +3,12 @@ import { api } from '../api';
 import { CycleCalibrationModal } from '../components/CycleCalibrationModal';
 import { EditSessionModal } from '../components/EditSessionModal';
 import { CompletedSession, Plan, Settings } from '../types';
+import {
+  buildCyclePattern,
+  deriveCycleAnchorFromHistory,
+  resolveEffectiveAnchorKey,
+  toLocalDateKey,
+} from '../utils/cycle';
 
 interface PlanOverviewScreenProps {
   plan: Plan;
@@ -10,13 +16,6 @@ interface PlanOverviewScreenProps {
   onSelectSession: (sessionNumber: number) => void;
   onRefreshPlan: () => void;
   onOpenSettings: () => void;
-}
-
-function toLocalDateKey(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
 }
 
 export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
@@ -59,15 +58,28 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
     }
   };
 
+  // Build cycle pattern array (length L)
+  const L = Math.max(1, plan.cycle.length_days);
+  const cyclePattern = buildCyclePattern(plan);
+
   const handleRegenerate = async () => {
     setRegenerating(true);
     try {
       await api.generatePlan();
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const newKey = toLocalDateKey(today);
-      localStorage.setItem('mgp_cycle_anchor_date', newKey);
-      setAnchorKey(newKey);
+      // If no explicit manual anchor set, re-sync anchor from history or fallback to today
+      if (localStorage.getItem('mgp_cycle_anchor_manual') !== 'true') {
+        const derived = deriveCycleAnchorFromHistory(history, cyclePattern);
+        if (derived) {
+          localStorage.setItem('mgp_cycle_anchor_date', derived);
+          setAnchorKey(derived);
+        } else {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const newKey = toLocalDateKey(today);
+          localStorage.setItem('mgp_cycle_anchor_date', newKey);
+          setAnchorKey(newKey);
+        }
+      }
       onRefreshPlan();
     } catch (err) {
       alert(`Regeneration failed: ${err}`);
@@ -75,18 +87,6 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
       setRegenerating(false);
     }
   };
-
-  // Build cycle pattern array (length L)
-  const L = Math.max(1, plan.cycle.length_days);
-  const S = plan.cycle.sessions_count;
-  const cyclePattern: Array<typeof plan.sessions[0] | null> = Array(L).fill(null);
-
-  if (S > 0) {
-    plan.sessions.forEach((sess, sIdx) => {
-      const dayIndex = Math.floor((sIdx * L) / S);
-      cyclePattern[dayIndex] = sess;
-    });
-  }
 
   // Group history by local date key
   const historyByDate = new Map<string, CompletedSession[]>();
@@ -98,21 +98,13 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
   });
 
   // Cycle Anchor Date & Dynamic Rest Day Positioning
-  let effectiveAnchorKey = anchorKey || localStorage.getItem('mgp_cycle_anchor_date');
-  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-  if (!effectiveAnchorKey || !dateRegex.test(effectiveAnchorKey)) {
-    if (history.length > 0) {
-      const earliestTs = Math.min(...history.map((s) => s.timestamp));
-      const d = new Date(earliestTs);
-      d.setHours(0, 0, 0, 0);
-      effectiveAnchorKey = toLocalDateKey(d);
-    } else {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      effectiveAnchorKey = toLocalDateKey(today);
-    }
-    localStorage.setItem('mgp_cycle_anchor_date', effectiveAnchorKey);
-  }
+  const isManualAnchor = localStorage.getItem('mgp_cycle_anchor_manual') === 'true';
+  const effectiveAnchorKey = resolveEffectiveAnchorKey({
+    anchorKey: anchorKey || localStorage.getItem('mgp_cycle_anchor_date') || undefined,
+    isManual: isManualAnchor,
+    history,
+    cyclePattern,
+  });
 
   const [aY, aM, aD] = effectiveAnchorKey.split('-').map(Number);
   const anchorMidnight = new Date(aY, (aM || 1) - 1, aD || 1, 0, 0, 0, 0);
@@ -173,7 +165,9 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
       circleClass = 'icon-rest';
       icon = '🌙';
       label = 'Rest';
-      tooltip = `${dateLabel}: Scheduled Cycle Rest & Recovery Day`;
+      tooltip = isToday
+        ? `Today (${dateLabel}): Scheduled Rest & Recovery Day`
+        : `${dateLabel}: Scheduled Cycle Rest & Recovery Day`;
     } else if (offset < 0) {
       // Case C: Past Scheduled Training Day with No Logged Workout
       if (diffDays < 0) {
@@ -473,8 +467,13 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
         plan={plan}
         currentAnchorDate={effectiveAnchorKey}
         history={history}
-        onSaveAnchorDate={(newDate) => {
+        onSaveAnchorDate={(newDate, isManualMode = true) => {
           localStorage.setItem('mgp_cycle_anchor_date', newDate);
+          if (isManualMode) {
+            localStorage.setItem('mgp_cycle_anchor_manual', 'true');
+          } else {
+            localStorage.removeItem('mgp_cycle_anchor_manual');
+          }
           setAnchorKey(newDate);
         }}
         onOpenEditSession={(sess, dateKey, sNum) => {
