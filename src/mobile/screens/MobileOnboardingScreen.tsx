@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api';
-import { CalibrationAnswers, ExperienceLevel, Units } from '../../types';
+import { CalibrationAnswers, ExperienceLevel, Muscle, Units } from '../../types';
 import { formatBackpackLoad, KG_TO_LB, CM_TO_IN } from '../../utils/units';
+import { BottomSheet } from '../components/BottomSheet';
 import { MobileNumberPicker } from '../components/MobileNumberPicker';
 
 interface MobileOnboardingScreenProps {
@@ -18,12 +19,45 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
   const [pullUpsAvg, setPullUpsAvg] = useState<number>(4);
   const [closeToFailure, setCloseToFailure] = useState<boolean>(true);
   const [experience, setExperience] = useState<ExperienceLevel>('six_to_24_months');
+  const [daysPerWeek, setDaysPerWeek] = useState<number>(3.5);
+  const [setsPerDay, setSetsPerDay] = useState<number>(4);
+  const [priorityMuscles, setPriorityMuscles] = useState<Muscle[]>(['chest']);
+  const [freqSheetOpen, setFreqSheetOpen] = useState(false);
 
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<{
     startingPush: string;
     addedWeight: number;
   } | null>(null);
+
+  const allMuscles: Muscle[] = ['chest', 'back', 'biceps', 'triceps', 'forearms', 'abs'];
+
+  const presets = [
+    { label: 'Every other day (3.5 days/wk)', val: 3.5 },
+    { label: '3 days / wk (3.0)', val: 3.0 },
+    { label: '4 days / wk (4.0)', val: 4.0 },
+    { label: '5 days / wk (5.0)', val: 5.0 },
+    { label: '3 on / 1 off (5.25 days/wk)', val: 5.25 },
+    { label: '2 on / 1 off (4.67 days/wk)', val: 4.67 },
+    { label: 'Every day (7.0 days/wk)', val: 7.0 },
+    { label: '1 on / 2 off (2.33 days/wk)', val: 2.33 },
+  ];
+
+  const togglePriorityMuscle = (m: Muscle) => {
+    if (priorityMuscles.includes(m)) {
+      if (priorityMuscles.length === 1) {
+        alert('You must have at least one priority muscle.');
+        return;
+      }
+      setPriorityMuscles(priorityMuscles.filter((p) => p !== m));
+    } else {
+      setPriorityMuscles([...priorityMuscles, m]);
+    }
+  };
+
+  const currentPresetLabel =
+    presets.find((p) => Math.abs(p.val - daysPerWeek) < 0.05)?.label ||
+    `${daysPerWeek} days/wk`;
 
   useEffect(() => {
     api.getSettings()
@@ -36,6 +70,15 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
           }
           if (s.experience) {
             setExperience(s.experience);
+          }
+          if (s.days_per_week) {
+            setDaysPerWeek(s.days_per_week);
+          }
+          if (s.sets_per_day) {
+            setSetsPerDay(s.sets_per_day);
+          }
+          if (s.priority_muscles && s.priority_muscles.length > 0) {
+            setPriorityMuscles(s.priority_muscles);
           }
         }
       })
@@ -72,21 +115,20 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
     };
 
     try {
-      // 1. Calibrate FIRST (calculates initial profile, sets up progression ladders, and generates plan)
-      const [, startingPush, addedWeight] = await api.calibrate(answers);
+      // 1. Persist user preferences like units, schedule, and priority muscles FIRST
+      const currentSettings = await api.getSettings();
+      await api.updateSettings({
+        ...currentSettings,
+        units,
+        experience,
+        bed_height_cm: bedHeightCm,
+        days_per_week: daysPerWeek,
+        sets_per_day: setsPerDay,
+        priority_muscles: priorityMuscles,
+      });
 
-      // 2. Persist user preferences like units
-      try {
-        const currentSettings = await api.getSettings();
-        await api.updateSettings({
-          ...currentSettings,
-          units,
-          experience,
-          bed_height_cm: bedHeightCm,
-        });
-      } catch (settingsErr) {
-        console.warn('Settings sync after calibration:', settingsErr);
-      }
+      // 2. Calibrate (calculates initial profile, sets up progression ladders, and generates plan)
+      const [, startingPush, addedWeight] = await api.calibrate(answers);
 
       setResult({ startingPush, addedWeight });
     } catch (err) {
@@ -123,6 +165,11 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
               Bodyweight baseline variation
             </div>
           )}
+          <div style={{ marginTop: '0.85rem', paddingTop: '0.75rem', borderTop: '1px solid var(--m-border)', fontSize: '0.82rem', color: 'var(--m-text-muted)', display: 'flex', justifyContent: 'space-around' }}>
+            <span>📅 {daysPerWeek} d/wk</span>
+            <span>🔢 {setsPerDay} sets</span>
+            <span>⭐ {priorityMuscles.join(', ')}</span>
+          </div>
         </div>
 
         <button
@@ -282,6 +329,74 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
           </div>
         </div>
 
+        {/* Training Schedule Preferences */}
+        <div className="m-grouped-section">
+          <div className="m-section-title">Schedule & Volume Targets</div>
+          <div className="m-inset-list">
+            {/* Frequency Row */}
+            <div
+              className="m-list-row m-list-row-clickable"
+              onClick={() => setFreqSheetOpen(true)}
+            >
+              <div className="m-row-left">
+                <span className="m-row-icon">📅</span>
+                <div>
+                  <div className="m-row-label">Training Frequency</div>
+                  <div className="m-row-sublabel">{currentPresetLabel}</div>
+                </div>
+              </div>
+              <span className="m-row-chevron">›</span>
+            </div>
+
+            {/* Target Sets Per Workout with MobileNumberPicker */}
+            <div className="m-list-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+              <div className="m-row-left" style={{ marginBottom: '0.5rem' }}>
+                <span className="m-row-icon">🔢</span>
+                <div>
+                  <div className="m-row-label">Target Sets Per Workout</div>
+                  <div className="m-row-sublabel">Strict volume invariance: 1–20 sets per session</div>
+                </div>
+              </div>
+              <MobileNumberPicker
+                value={setsPerDay}
+                unit="sets"
+                min={1}
+                max={20}
+                step={1}
+                quickStep={2}
+                onChange={setSetsPerDay}
+                id="onboarding-sets-per-day"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Priority Muscles */}
+        <div className="m-grouped-section">
+          <div className="m-section-title">Priority Muscles</div>
+          <div className="m-card">
+            <p style={{ fontSize: '0.82rem', color: 'var(--m-text-muted)', margin: '0 0 0.75rem' }}>
+              Select target muscles for optimal growth (MAV volume allocation). Tap to toggle.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+              {allMuscles.map((m) => {
+                const isSelected = priorityMuscles.includes(m);
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`m-btn ${isSelected ? 'm-btn-primary' : 'm-btn-secondary'}`}
+                    style={{ height: '44px', textTransform: 'capitalize', fontSize: '0.88rem' }}
+                    onClick={() => togglePriorityMuscle(m)}
+                  >
+                    {isSelected ? '★ ' : ''} {m}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
         <button
           type="submit"
           className="m-btn m-btn-primary"
@@ -291,6 +406,35 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
           {loading ? 'Calculating Plan...' : 'Calculate My Training Plan ›'}
         </button>
       </form>
+
+      {/* Frequency Bottom Sheet */}
+      <BottomSheet
+        isOpen={freqSheetOpen}
+        onClose={() => setFreqSheetOpen(false)}
+        title="Select Training Frequency"
+        id="onboarding-freq-sheet"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {presets.map((p) => (
+            <div
+              key={p.val}
+              className="m-list-row m-list-row-clickable"
+              style={{
+                borderRadius: 'var(--m-radius-md)',
+                background: Math.abs(daysPerWeek - p.val) < 0.05 ? 'rgba(99, 102, 241, 0.2)' : 'var(--m-bg-card)',
+                border: Math.abs(daysPerWeek - p.val) < 0.05 ? '1px solid var(--m-primary)' : '1px solid var(--m-border)',
+              }}
+              onClick={() => {
+                setDaysPerWeek(p.val);
+                setFreqSheetOpen(false);
+              }}
+            >
+              <span className="m-row-label">{p.label}</span>
+              {Math.abs(daysPerWeek - p.val) < 0.05 && <span style={{ color: 'var(--m-cyan)' }}>✓</span>}
+            </div>
+          ))}
+        </div>
+      </BottomSheet>
     </div>
   );
 };

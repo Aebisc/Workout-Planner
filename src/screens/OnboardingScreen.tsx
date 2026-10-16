@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
-import { CalibrationAnswers, ExperienceLevel, Units } from '../types';
+import { CalibrationAnswers, ExperienceLevel, Muscle, Units } from '../types';
 import { formatBackpackLoad, KG_TO_LB, CM_TO_IN } from '../utils/units';
 
 interface OnboardingScreenProps {
@@ -15,12 +15,47 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
   const [pullUpsAvg, setPullUpsAvg] = useState<number>(4);
   const [closeToFailure, setCloseToFailure] = useState<boolean>(true);
   const [experience, setExperience] = useState<ExperienceLevel>('six_to_24_months');
+  const [daysPerWeek, setDaysPerWeek] = useState<number>(3.5);
+  const [setsPerDay, setSetsPerDay] = useState<number>(4);
+  const [priorityMuscles, setPriorityMuscles] = useState<Muscle[]>(['chest']);
 
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<{
     startingPush: string;
     addedWeight: number;
   } | null>(null);
+
+  const allMuscles: Muscle[] = [
+    'chest',
+    'back',
+    'biceps',
+    'triceps',
+    'forearms',
+    'abs',
+  ];
+
+  const presets = [
+    { label: 'Every other day (3.5)', val: 3.5 },
+    { label: '3 days / wk (3.0)', val: 3.0 },
+    { label: '4 days / wk (4.0)', val: 4.0 },
+    { label: '5 days / wk (5.0)', val: 5.0 },
+    { label: '3 on / 1 off (5.25)', val: 5.25 },
+    { label: '2 on / 1 off (4.67)', val: 4.67 },
+    { label: 'Every day (7.0)', val: 7.0 },
+    { label: '1 on / 2 off (2.33)', val: 2.33 },
+  ];
+
+  const togglePriorityMuscle = (m: Muscle) => {
+    if (priorityMuscles.includes(m)) {
+      if (priorityMuscles.length === 1) {
+        alert('You must have at least one priority muscle.');
+        return;
+      }
+      setPriorityMuscles(priorityMuscles.filter((p) => p !== m));
+    } else {
+      setPriorityMuscles([...priorityMuscles, m]);
+    }
+  };
 
   useEffect(() => {
     api.getSettings().then((s) => {
@@ -32,6 +67,15 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
         }
         if (s.experience) {
           setExperience(s.experience);
+        }
+        if (s.days_per_week) {
+          setDaysPerWeek(s.days_per_week);
+        }
+        if (s.sets_per_day) {
+          setSetsPerDay(s.sets_per_day);
+        }
+        if (s.priority_muscles && s.priority_muscles.length > 0) {
+          setPriorityMuscles(s.priority_muscles);
         }
       }
     }).catch(console.error);
@@ -73,6 +117,10 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
         ...currentSettings,
         units,
         experience,
+        bed_height_cm: bedHeightCm,
+        days_per_week: daysPerWeek,
+        sets_per_day: setsPerDay,
+        priority_muscles: priorityMuscles,
       });
 
       const [, startingPush, addedWeight] = await api.calibrate(answers);
@@ -109,6 +157,9 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
               Note: Because pull-up average is 0, your pull progression begins on the assisted/eccentric path.
             </p>
           )}
+          <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '0.88rem', color: '#94a3b8' }}>
+            <span>📅 {daysPerWeek} days/wk</span> • <span>🔢 {setsPerDay} sets/session</span> • <span>⭐ {priorityMuscles.join(', ')}</span>
+          </div>
         </div>
 
         <button className="btn btn-primary btn-lg mt-4" onClick={onComplete}>
@@ -280,6 +331,70 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
                 <p className="exp-desc">{item.desc}</p>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>Training Frequency (Days Per Week)</label>
+          <span className="help-text">
+            How often you want to train. Cycles adapt automatically to ensure systemic recovery.
+          </span>
+          <div className="presets-row mb-2">
+            {presets.map((p) => (
+              <button
+                key={p.val}
+                type="button"
+                className={`btn btn-xs ${Math.abs(daysPerWeek - p.val) < 0.05 ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setDaysPerWeek(p.val)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <input
+            type="number"
+            step="0.01"
+            min="1.0"
+            max="7.0"
+            value={daysPerWeek}
+            onChange={(e) => setDaysPerWeek(parseFloat(e.target.value) || 3.5)}
+          />
+        </div>
+
+        <div className="form-group">
+          <label>Target Sets Per Workout</label>
+          <span className="help-text">
+            Strict volume invariance: each session will contain exactly this many sets (1–20 sets). Default is 4.
+          </span>
+          <input
+            type="number"
+            min="1"
+            max="20"
+            value={setsPerDay}
+            onChange={(e) => setSetsPerDay(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))}
+          />
+        </div>
+
+        <div className="form-group">
+          <label>Priority Muscles (Target for Optimal Growth)</label>
+          <span className="help-text">
+            Cycle volume after maintenance will be distributed equally among your chosen muscles. Select at least one.
+          </span>
+          <div className="muscle-chips-grid">
+            {allMuscles.map((m) => {
+              const checked = priorityMuscles.includes(m);
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  className={`muscle-chip ${checked ? 'active' : ''}`}
+                  onClick={() => togglePriorityMuscle(m)}
+                >
+                  <span className="muscle-chip-name">{m.toUpperCase()}</span>
+                  <span className="muscle-chip-status">{checked ? '✓ Target' : '+ Add'}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
