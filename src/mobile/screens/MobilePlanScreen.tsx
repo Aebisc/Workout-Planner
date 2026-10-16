@@ -158,8 +158,95 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
     handleApplyCalibrationDate(key, false);
   };
 
+  const getSessionDraftCount = (sessionNum: number): number => {
+    try {
+      const raw = sessionStorage.getItem(`mgp_active_session_${sessionNum}`);
+      if (!raw) return 0;
+      const parsed = JSON.parse(raw);
+      return Object.values(parsed).reduce(
+        (acc: number, list: any) => acc + (Array.isArray(list) ? list.length : 0),
+        0
+      );
+    } catch {
+      return 0;
+    }
+  };
+
   return (
     <div className="mobile-view-container">
+      {/* Deload Active Banner & Restore Action */}
+      {plan.is_deload && (
+        <div
+          className="m-card"
+          style={{
+            background: 'rgba(6, 182, 212, 0.15)',
+            border: '1px solid rgba(6, 182, 212, 0.4)',
+            marginBottom: '1rem',
+            padding: '1rem',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+            <div>
+              <h4 style={{ color: 'var(--m-cyan)', margin: '0 0 0.25rem', fontSize: '0.95rem' }}>
+                Deload Cycle Active 🔄
+              </h4>
+              <p style={{ fontSize: '0.82rem', color: 'var(--m-text-muted)', margin: 0 }}>
+                You are on a lighter recovery cycle. Ready to restore your full training volume?
+              </p>
+            </div>
+            <button
+              type="button"
+              className="m-btn m-btn-primary"
+              style={{ width: 'auto', padding: '0 0.85rem', height: '36px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+              onClick={async () => {
+                await api.restoreDeloadPlan();
+                onRefreshPlan();
+              }}
+            >
+              Restore Full Plan
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Engine Alerts */}
+      {(plan.cycle.is_adjusted || plan.maintenance_dropped) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+          {plan.cycle.is_adjusted && (
+            <div
+              style={{
+                padding: '0.55rem 0.85rem',
+                borderRadius: 'var(--m-radius-sm)',
+                background: 'rgba(245, 158, 11, 0.12)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                color: 'var(--m-amber)',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                lineHeight: 1.35,
+              }}
+            >
+              ⚠️ Cycle Adjusted: A rest day was automatically inserted into the cycle to respect your recovery limits.
+            </div>
+          )}
+          {plan.maintenance_dropped && (
+            <div
+              style={{
+                padding: '0.55rem 0.85rem',
+                borderRadius: 'var(--m-radius-sm)',
+                background: 'rgba(245, 158, 11, 0.12)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                color: 'var(--m-amber)',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                lineHeight: 1.35,
+              }}
+            >
+              ⚠️ Maintenance Sets Reduced: Non-priority maintenance sets were scaled down to honor your target sets per workout limit.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Macrocycle Progress Pill Banner */}
       <div
         className="m-card"
@@ -421,13 +508,37 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
                   </div>
                 )}
 
-                <button
-                  type="button"
-                  className="m-btn m-btn-primary"
-                  onClick={() => onSelectSession(sessNumber)}
-                >
-                  ▶ Start Session {sessNumber}
-                </button>
+                {(() => {
+                  const draftSets = getSessionDraftCount(sessNumber);
+                  return draftSets > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <button
+                        type="button"
+                        className="m-btn m-btn-success"
+                        style={{ height: '48px', fontWeight: 800 }}
+                        onClick={() => onSelectSession(sessNumber)}
+                      >
+                        ▶ Resume Session {sessNumber} ({draftSets} sets logged)
+                      </button>
+                      <button
+                        type="button"
+                        className="m-btn m-btn-secondary"
+                        style={{ height: '38px', fontSize: '0.8rem' }}
+                        onClick={() => onSelectSession(sessNumber)}
+                      >
+                        Restart / Edit Session
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="m-btn m-btn-primary"
+                      onClick={() => onSelectSession(sessNumber)}
+                    >
+                      ▶ Start Session {sessNumber}
+                    </button>
+                  );
+                })()}
               </div>
             );
           })()
@@ -451,6 +562,7 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
         <div className="m-inset-list">
           {plan.sessions.map((sess) => {
             const setsCount = sess.blocks.reduce((acc, b) => acc + b.sets, 0);
+            const draftSets = getSessionDraftCount(sess.session_number);
             return (
               <div
                 key={sess.session_number}
@@ -469,7 +581,13 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
                   </div>
                 </div>
                 <div className="m-row-right">
-                  <span className="m-row-value">Start ›</span>
+                  {draftSets > 0 ? (
+                    <span style={{ color: 'var(--m-green)', fontSize: '0.78rem', fontWeight: 800 }}>
+                      Resume ({draftSets}s) ›
+                    </span>
+                  ) : (
+                    <span className="m-row-value">Start ›</span>
+                  )}
                 </div>
               </div>
             );
@@ -588,6 +706,7 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
         initialDate={editSheetInitialDate}
         initialSessionNumber={editSheetInitialSessionNum}
         plan={plan}
+        units={_settings.units}
         onSaved={() => {
           api.getSessionHistory().then(setHistory).catch(console.error);
           onRefreshPlan();

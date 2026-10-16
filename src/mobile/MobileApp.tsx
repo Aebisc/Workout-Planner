@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plan, Settings } from '../types';
 import { MobileHeader } from './components/MobileHeader';
 import { MobileBottomNav, MobileTab } from './components/MobileBottomNav';
@@ -71,6 +71,16 @@ export const MobileApp: React.FC<MobileAppProps> = ({
 
       // 2. If inside a stacked view (session or onboarding), return to workouts
       if (activeStack) {
+        if (activeStack === 'session' && sessionBackInterceptRef.current) {
+          const intercepted = sessionBackInterceptRef.current();
+          if (intercepted) {
+            window.history.pushState(
+              { mobileStack: 'session', sessionNumber: selectedSessionNumber },
+              ''
+            );
+            return;
+          }
+        }
         setActiveStack(null);
         onNavigate?.('overview');
         return;
@@ -87,6 +97,8 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     return () => window.removeEventListener('popstate', handlePopState);
   }, [activeStack, activeTab, selectedSessionNumber, onNavigate]);
 
+  const sessionBackInterceptRef = useRef<(() => boolean) | null>(null);
+
   const handleStartSession = (sessNum: number) => {
     setSelectedSessionNumber(sessNum);
     window.history.pushState({ mobileStack: 'session', sessionNumber: sessNum }, '');
@@ -95,6 +107,10 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   };
 
   const handleBackToWorkouts = async () => {
+    if (activeStack === 'session' && sessionBackInterceptRef.current) {
+      const intercepted = sessionBackInterceptRef.current();
+      if (intercepted) return;
+    }
     await refreshState(true);
     setActiveStack(null);
     onNavigate?.('overview');
@@ -117,6 +133,25 @@ export const MobileApp: React.FC<MobileAppProps> = ({
         title={getHeaderTitle()}
         showBack={!!activeStack}
         onBack={handleBackToWorkouts}
+        rightAction={
+          activeStack === 'session' ? (
+            <button
+              type="button"
+              className="m-btn m-btn-secondary"
+              onClick={handleBackToWorkouts}
+              style={{
+                height: '32px',
+                fontSize: '0.78rem',
+                padding: '0 0.65rem',
+                borderRadius: 'var(--m-radius-sm)',
+                border: '1px solid var(--m-primary)',
+                color: 'var(--m-cyan)',
+              }}
+            >
+              ⏸ Pause
+            </button>
+          ) : undefined
+        }
       />
 
       {/* Screen Views */}
@@ -136,6 +171,9 @@ export const MobileApp: React.FC<MobileAppProps> = ({
           sessionNumber={selectedSessionNumber}
           settings={settings}
           onBackToOverview={handleBackToWorkouts}
+          registerBackIntercept={(fn) => {
+            sessionBackInterceptRef.current = fn;
+          }}
         />
       )}
 

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api';
-import { CompletedSession, Exercise, Plan, SessionExerciseSummary, SetLog } from '../../types';
+import { CompletedSession, Exercise, Plan, SessionExerciseSummary, SetLog, Units } from '../../types';
 import { toLocalDateKey } from '../../utils/cycle';
 import { BottomSheet } from './BottomSheet';
+
+const KG_TO_LB = 2.20462;
 
 interface ExerciseFormItem {
   exercise_id: string;
@@ -21,6 +23,7 @@ interface MobileEditSessionSheetProps {
   initialDate?: string;
   initialSessionNumber?: number;
   plan?: Plan;
+  units?: Units;
   onSaved: () => void;
 }
 
@@ -31,6 +34,7 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
   initialDate,
   initialSessionNumber,
   plan,
+  units = 'metric',
   onSaved,
 }) => {
   const [workoutDate, setWorkoutDate] = useState<string>('');
@@ -60,17 +64,73 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
       setWorkoutDate(toLocalDateKey(d));
       setSessionNum(sessionToEdit.session_number);
 
-      // Deep clone existing exercises summary
-      const forms: ExerciseFormItem[] = sessionToEdit.exercises_summary.map((summary) => ({
-        exercise_id: summary.exercise_id,
-        exercise_name: summary.exercise_name,
-        added_weight_kg: summary.added_weight_kg || 0,
-        sets: summary.reps_or_seconds.map((reps) => ({
-          reps,
-          rir: Math.round(summary.avg_rir || 2),
-        })),
-      }));
-      setExerciseForms(forms);
+      // Attempt to load exact set logs for accurate per-set RIR and added_weight_kg
+      api.getSetLogs()
+        .then((allLogs) => {
+          const sessionLogs = allLogs.filter(
+            (l) =>
+              l.session_number === sessionToEdit.session_number &&
+              Math.abs(l.timestamp - sessionToEdit.timestamp) < 43_200_000
+          );
+
+          if (sessionLogs.length > 0) {
+            sessionLogs.sort((a, b) => a.block_index - b.block_index);
+            const grouped: Record<string, SetLog[]> = {};
+            const exerciseOrder: string[] = [];
+            sessionLogs.forEach((l) => {
+              if (!grouped[l.exercise_id]) {
+                grouped[l.exercise_id] = [];
+                exerciseOrder.push(l.exercise_id);
+              }
+              grouped[l.exercise_id].push(l);
+            });
+
+            const summaryOrder = sessionToEdit.exercises_summary.map((s) => s.exercise_id);
+            const orderedIds = [
+              ...summaryOrder.filter((id) => grouped[id]),
+              ...exerciseOrder.filter((id) => !summaryOrder.includes(id)),
+            ];
+
+            const forms: ExerciseFormItem[] = orderedIds.map((exId) => {
+              const logs = grouped[exId];
+              const summary = sessionToEdit.exercises_summary.find((s) => s.exercise_id === exId);
+              return {
+                exercise_id: exId,
+                exercise_name: summary?.exercise_name || exId.replace(/_/g, ' '),
+                added_weight_kg: logs[0]?.added_weight_kg ?? summary?.added_weight_kg ?? 0,
+                sets: logs.map((l) => ({
+                  reps: l.reps_or_seconds,
+                  rir: l.reps_from_failure,
+                })),
+              };
+            });
+            setExerciseForms(forms);
+          } else {
+            // Fall back to exercises_summary
+            const forms: ExerciseFormItem[] = sessionToEdit.exercises_summary.map((summary) => ({
+              exercise_id: summary.exercise_id,
+              exercise_name: summary.exercise_name,
+              added_weight_kg: summary.added_weight_kg || 0,
+              sets: summary.reps_or_seconds.map((reps) => ({
+                reps,
+                rir: Math.round(summary.avg_rir || 2),
+              })),
+            }));
+            setExerciseForms(forms);
+          }
+        })
+        .catch(() => {
+          const forms: ExerciseFormItem[] = sessionToEdit.exercises_summary.map((summary) => ({
+            exercise_id: summary.exercise_id,
+            exercise_name: summary.exercise_name,
+            added_weight_kg: summary.added_weight_kg || 0,
+            sets: summary.reps_or_seconds.map((reps) => ({
+              reps,
+              rir: Math.round(summary.avg_rir || 2),
+            })),
+          }));
+          setExerciseForms(forms);
+        });
     } else if (initialSessionNumber && plan) {
       // Backfill new past workout
       const targetDate = initialDate || toLocalDateKey(new Date());
@@ -256,26 +316,64 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
           const exMeta = exercisesMap[ex.exercise_id];
           return (
             <div key={ex.exercise_id} className="m-card" style={{ padding: '0.85rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <h4 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--m-text-main)' }}>
                   {exMeta ? exMeta.name : ex.exercise_name || ex.exercise_id.replace(/_/g, ' ')}
                 </h4>
-                <button
-                  type="button"
-                  style={{
-                    background: 'rgba(99, 102, 241, 0.15)',
-                    border: '1px solid rgba(99, 102, 241, 0.3)',
-                    color: 'var(--m-cyan)',
-                    borderRadius: '4px',
-                    padding: '0.2rem 0.5rem',
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                  onClick={() => handleAddSet(exIdx)}
-                >
-                  + Add Set
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <label style={{ fontSize: '0.75rem', color: 'var(--m-text-muted)' }}>
+                      + Load ({units === 'imperial' ? 'lb' : 'kg'}):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={
+                        units === 'imperial'
+                          ? Number(((ex.added_weight_kg || 0) * KG_TO_LB).toFixed(1))
+                          : Number((ex.added_weight_kg || 0).toFixed(1))
+                      }
+                      onChange={(e) => {
+                        const rawVal = parseFloat(e.target.value) || 0;
+                        const weightKg = units === 'imperial' ? rawVal / KG_TO_LB : rawVal;
+                        setExerciseForms((prev) => {
+                          const clone = JSON.parse(JSON.stringify(prev));
+                          if (clone[exIdx]) {
+                            clone[exIdx].added_weight_kg = Math.max(0, weightKg);
+                          }
+                          return clone;
+                        });
+                      }}
+                      style={{
+                        width: '54px',
+                        padding: '0.2rem 0.35rem',
+                        borderRadius: '4px',
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        border: '1px solid var(--m-border)',
+                        color: 'var(--m-text-main)',
+                        fontSize: '0.8rem',
+                        textAlign: 'center',
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    style={{
+                      background: 'rgba(99, 102, 241, 0.15)',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                      color: 'var(--m-cyan)',
+                      borderRadius: '4px',
+                      padding: '0.2rem 0.5rem',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => handleAddSet(exIdx)}
+                  >
+                    + Add Set
+                  </button>
+                </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>

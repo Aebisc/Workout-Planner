@@ -883,3 +883,44 @@
   font-size: 0.75rem;
   color: var(--m-text-muted);
 }
+
+/* BottomSheet Drag Zone */
+.m-sheet-drag-zone {
+  width: 100%;
+  cursor: grab;
+  touch-action: pan-y;
+}
+
+/* Mobile Number Picker Quick Presets */
+.m-numpad-presets {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0 0.25rem 0.75rem;
+  margin-bottom: 0.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.m-numpad-preset-chip {
+  flex: 1 0 auto;
+  min-width: 44px;
+  height: 38px;
+  background: var(--m-bg-card);
+  border: 1px solid var(--m-border);
+  border-radius: var(--m-radius-sm);
+  color: var(--m-text-main);
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.m-numpad-preset-chip.active {
+  background: var(--m-primary);
+  border-color: var(--m-cyan);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+}

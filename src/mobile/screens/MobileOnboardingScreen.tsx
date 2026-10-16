@@ -227,8 +227,8 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
               label="Body Weight"
               value={weight}
               unit={units === 'metric' ? 'kg' : 'lb'}
-              min={30}
-              max={300}
+              min={units === 'metric' ? 30 : 66}
+              max={units === 'metric' ? 250 : 550}
               step={1}
               quickStep={5}
               onChange={setWeight}
@@ -239,8 +239,8 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
               label="Bed / Incline Height"
               value={bedHeight}
               unit={units === 'metric' ? 'cm' : 'in'}
-              min={10}
-              max={120}
+              min={units === 'metric' ? 20 : 8}
+              max={units === 'metric' ? 120 : 48}
               step={1}
               quickStep={5}
               onChange={setBedHeight}
@@ -280,10 +280,10 @@ export const MobileOnboardingScreen: React.FC<MobileOnboardingScreenProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '0.5rem', borderTop: '1px solid var(--m-border)' }}>
               <div>
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--m-text-main)' }}>
-                  Sets Taken Close to Failure (0–2 RIR)
+                  Sets Taken Close to Failure (0–3 RIR)
                 </div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--m-text-muted)' }}>
-                  Calibration requires hard sets
+                  Sets within 0–3 reps from muscular failure
                 </div>
               </div>
               <label className="m-switch">

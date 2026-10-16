@@ -24,17 +24,21 @@ interface MobileSessionScreenProps {
   sessionNumber: number;
   settings: Settings;
   onBackToOverview: () => void;
+  registerBackIntercept?: (fn: () => boolean) => void;
 }
 
 export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
   sessionNumber,
   settings,
   onBackToOverview,
+  registerBackIntercept,
 }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [exercises, setExercises] = useState<Record<string, Exercise>>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [activeBlockIndex, setActiveBlockIndex] = useState<number>(0);
+  const [exitGuardSheetOpen, setExitGuardSheetOpen] = useState<boolean>(false);
+  const pillRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
 
   const [soundEnabled, setSoundEnabled] = useState<boolean>(
     settings.rest_timer_sound ?? true
@@ -122,6 +126,15 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     return () => window.clearInterval(interval);
   }, [restTimer?.isActive, restTimer?.endTimeMs, soundEnabled]);
 
+  // Auto-scroll exercise pill into view when active block changes
+  useEffect(() => {
+    pillRefs.current[activeBlockIndex]?.scrollIntoView({
+      behavior: 'smooth',
+      inline: 'center',
+      block: 'nearest',
+    });
+  }, [activeBlockIndex]);
+
   const loadData = async () => {
     try {
       const [plan, exList] = await Promise.all([api.getPlan(), api.getExercises()]);
@@ -139,10 +152,19 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
           const initInput: Record<number, { reps: number; rir: number }> = {};
           found.blocks.forEach((b, idx) => {
             const ex = exMap[b.exercise_id];
-            const defaultReps = ex && ex.time_based ? b.seconds_target_min || 30 : b.rep_target_min || 10;
+            const defaultReps = ex && ex.time_based ? b.seconds_target_min || 20 : b.rep_target_min || 10;
             initInput[idx] = { reps: defaultReps, rir: 2 };
           });
-          setActiveInput((prev) => ({ ...initInput, ...prev }));
+          setActiveInput((prev) => {
+            const next = { ...initInput };
+            Object.keys(prev).forEach((k) => {
+              const idx = Number(k);
+              if (currentSessionSets[idx] && currentSessionSets[idx].length > 0) {
+                next[idx] = prev[idx];
+              }
+            });
+            return next;
+          });
         }
       }
     } catch (err) {
@@ -155,6 +177,21 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
   useEffect(() => {
     loadData();
   }, [sessionNumber]);
+
+  // Intercept back actions if there are unsaved sets
+  useEffect(() => {
+    if (!registerBackIntercept) return;
+    registerBackIntercept(() => {
+      const hasLoggedSets = Object.values(currentSessionSets).some(
+        (arr) => arr && arr.length > 0
+      );
+      if (hasLoggedSets && !completedSummary) {
+        setExitGuardSheetOpen(true);
+        return true; // Stop navigation
+      }
+      return false; // Proceed with navigation
+    });
+  }, [registerBackIntercept, currentSessionSets, completedSummary]);
 
   // Persist active session sets to sessionStorage
   useEffect(() => {
@@ -386,6 +423,9 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
           return (
             <button
               key={idx}
+              ref={(el) => {
+                pillRefs.current[idx] = el;
+              }}
               type="button"
               className={`m-ex-pill ${activeBlockIndex === idx ? 'active' : ''} ${isDone ? 'completed' : ''}`}
               onClick={() => setActiveBlockIndex(idx)}
@@ -620,7 +660,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
       </div>
 
       {/* Finish Workout Action */}
-      <div style={{ marginTop: '1.5rem', marginBottom: '4rem' }}>
+      <div style={{ marginTop: '1.5rem', marginBottom: restTimer ? '6.5rem' : '2.5rem' }}>
         <button
           type="button"
           className="m-btn m-btn-success"
@@ -650,6 +690,70 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
         onSwapSelected={handleSwapSelected}
         backpackEnabled={settings.backpack}
       />
+
+      {/* Exit Guard Bottom Sheet */}
+      <BottomSheet
+        isOpen={exitGuardSheetOpen}
+        onClose={() => setExitGuardSheetOpen(false)}
+        title="Workout In Progress ⏸"
+        id="session-exit-guard-sheet"
+      >
+        <div style={{ textAlign: 'center', margin: '0.5rem 0 1.25rem' }}>
+          <p style={{ color: 'var(--m-text-main)', fontSize: '0.95rem', margin: '0 0 0.5rem' }}>
+            You have <strong>{completedSessionSets}</strong> sets logged in Session {session.session_number}.
+          </p>
+          <p style={{ color: 'var(--m-text-muted)', fontSize: '0.85rem', margin: 0 }}>
+            Would you like to finish and save now, pause and keep your draft, or discard this session?
+          </p>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <button
+            type="button"
+            className="m-btn m-btn-success"
+            style={{ height: '48px', fontSize: '0.95rem' }}
+            onClick={async () => {
+              setExitGuardSheetOpen(false);
+              await handleFinishWorkout();
+            }}
+          >
+            ✓ Finish & Save Session
+          </button>
+          <button
+            type="button"
+            className="m-btn m-btn-primary"
+            style={{ height: '48px', fontSize: '0.95rem' }}
+            onClick={() => {
+              setExitGuardSheetOpen(false);
+              onBackToOverview();
+            }}
+          >
+            ⏸ Pause Workout (Keep Draft)
+          </button>
+          <button
+            type="button"
+            className="m-btn m-btn-secondary"
+            style={{ height: '44px', fontSize: '0.88rem', color: 'var(--m-red)' }}
+            onClick={() => {
+              try {
+                sessionStorage.removeItem(`mgp_active_session_${sessionNumber}`);
+              } catch {}
+              setCurrentSessionSets({});
+              setExitGuardSheetOpen(false);
+              onBackToOverview();
+            }}
+          >
+            🗑 Discard Draft Sets
+          </button>
+          <button
+            type="button"
+            className="m-btn m-btn-secondary"
+            style={{ height: '44px', fontSize: '0.88rem' }}
+            onClick={() => setExitGuardSheetOpen(false)}
+          >
+            Continue Workout
+          </button>
+        </div>
+      </BottomSheet>
 
       {/* Completion Celebration Bottom Sheet */}
       <BottomSheet
@@ -712,15 +816,26 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
               const tempoKey = `${sug.session_number}-${sug.block_index}-tempo`;
               const advanceKey = `${sug.session_number}-${sug.block_index}-advance`;
               const backpackKey = `${sug.session_number}-${sug.block_index}-backpack`;
+              const targetBlock = session.blocks[sug.block_index];
+              const targetEx = targetBlock ? exercises[targetBlock.exercise_id] : undefined;
+              const exName = targetEx?.name || targetBlock?.exercise_id?.replace(/_/g, ' ') || 'Exercise';
 
               return (
                 <div key={sIdx} style={{ padding: '0.65rem 0', borderBottom: sIdx < progressionSuggestions.length - 1 ? '1px solid var(--m-border)' : 'none' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                    <span style={{ fontWeight: 800, fontSize: '0.85rem', color: 'var(--m-cyan)' }}>
+                      {exName}
+                    </span>
+                    <span style={{ fontSize: '0.72rem', background: 'rgba(99, 102, 241, 0.2)', color: 'var(--m-primary)', padding: '0.15rem 0.45rem', borderRadius: '4px', fontWeight: 700 }}>
+                      Block {sug.block_index + 1}
+                    </span>
+                  </div>
                   <p style={{ fontSize: '0.85rem', margin: '0 0 0.5rem', color: 'var(--m-text-main)' }}>
                     • <strong>{sug.action.replace(/_/g, ' ')}:</strong> {sug.message}
                   </p>
 
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    {sug.action === 'add_intensifiers' && (
+                    {(sug.action === 'intensify_execution' || sug.action === 'add_intensifiers') && (
                       <>
                         {appliedSuggestions[tempoKey] ? (
                           <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Applied Tempo Cue</span>

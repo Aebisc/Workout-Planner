@@ -72,6 +72,16 @@ export const MobileNumberPicker: React.FC<MobileNumberPickerProps> = ({
     onChange(next);
   };
 
+  const rawPresets: number[] =
+    unit === 's'
+      ? [20, 30, 45, 60, 90]
+      : unit === 'reps'
+      ? [6, 8, 10, 12, 15, 20]
+      : unit === 'sets'
+      ? [2, 3, 4, 5, 6, 8]
+      : [];
+  const quickPresets = rawPresets.filter((p) => p >= min && p <= max);
+
   return (
     <div className="m-number-picker">
       {label && <label className="m-picker-label">{label}</label>}
@@ -143,6 +153,24 @@ export const MobileNumberPicker: React.FC<MobileNumberPickerProps> = ({
             Range: {min} – {max} {unit}
           </div>
         </div>
+
+        {quickPresets.length > 0 && (
+          <div className="m-numpad-presets">
+            {quickPresets.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className={`m-numpad-preset-chip ${Number(padVal) === preset ? 'active' : ''}`}
+                onClick={() => {
+                  onChange(preset);
+                  setPadOpen(false);
+                }}
+              >
+                {preset}{unit === 's' ? 's' : ''}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="m-numpad-grid">
           {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
