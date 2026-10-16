@@ -332,6 +332,8 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
       const response = await api.completeSession(completedSess, allLoggedSets);
       setProgressionSuggestions(response.suggestions || []);
       sessionStorage.removeItem(`mgp_active_session_${sessionNumber}`);
+      setCurrentSessionSets({});
+      setRestTimer(null);
       setCompletedSummary({
         sessionNumber: session.session_number,
         totalSets: allLoggedSets.length,

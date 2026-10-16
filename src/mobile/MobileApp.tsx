@@ -106,11 +106,12 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     onNavigate?.('session');
   };
 
-  const handleBackToWorkouts = async () => {
-    if (activeStack === 'session' && sessionBackInterceptRef.current) {
+  const handleBackToWorkouts = async (forceExit = false) => {
+    if (!forceExit && activeStack === 'session' && sessionBackInterceptRef.current) {
       const intercepted = sessionBackInterceptRef.current();
       if (intercepted) return;
     }
+    sessionBackInterceptRef.current = null;
     await refreshState(true);
     setActiveStack(null);
     onNavigate?.('overview');
@@ -132,13 +133,13 @@ export const MobileApp: React.FC<MobileAppProps> = ({
       <MobileHeader
         title={getHeaderTitle()}
         showBack={!!activeStack}
-        onBack={handleBackToWorkouts}
+        onBack={() => handleBackToWorkouts(false)}
         rightAction={
           activeStack === 'session' ? (
             <button
               type="button"
               className="m-btn m-btn-secondary"
-              onClick={handleBackToWorkouts}
+              onClick={() => handleBackToWorkouts(false)}
               style={{
                 height: '32px',
                 fontSize: '0.78rem',
@@ -170,7 +171,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
         <MobileSessionScreen
           sessionNumber={selectedSessionNumber}
           settings={settings}
-          onBackToOverview={handleBackToWorkouts}
+          onBackToOverview={() => handleBackToWorkouts(true)}
           registerBackIntercept={(fn) => {
             sessionBackInterceptRef.current = fn;
           }}

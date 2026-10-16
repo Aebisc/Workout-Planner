@@ -42,9 +42,14 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
   const [exerciseForms, setExerciseForms] = useState<ExerciseFormItem[]>([]);
   const [exercisesMap, setExercisesMap] = useState<Record<string, Exercise>>({});
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setConfirmingDelete(false);
+      return;
+    }
+    setConfirmingDelete(false);
     api.getExercises()
       .then((list) => {
         const map: Record<string, Exercise> = {};
@@ -269,7 +274,10 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
 
   const handleDelete = async () => {
     if (!sessionToEdit) return;
-    if (!confirm('Are you sure you want to delete this completed workout from your history?')) return;
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      return;
+    }
     setSaving(true);
     try {
       await api.deleteCompletedSession(sessionToEdit.id);
@@ -279,6 +287,7 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
       alert(`Failed to delete session: ${err}`);
     } finally {
       setSaving(false);
+      setConfirmingDelete(false);
     }
   };
 
@@ -321,41 +330,67 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
                   {exMeta ? exMeta.name : ex.exercise_name || ex.exercise_id.replace(/_/g, ' ')}
                 </h4>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <label style={{ fontSize: '0.75rem', color: 'var(--m-text-muted)' }}>
-                      + Load ({units === 'imperial' ? 'lb' : 'kg'}):
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={
-                        units === 'imperial'
-                          ? Number(((ex.added_weight_kg || 0) * KG_TO_LB).toFixed(1))
-                          : Number((ex.added_weight_kg || 0).toFixed(1))
-                      }
-                      onChange={(e) => {
-                        const rawVal = parseFloat(e.target.value) || 0;
-                        const weightKg = units === 'imperial' ? rawVal / KG_TO_LB : rawVal;
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--m-text-muted)', marginRight: '0.15rem' }}>
+                      Load:
+                    </span>
+                    <button
+                      type="button"
+                      style={{
+                        width: '26px',
+                        height: '26px',
+                        background: 'rgba(255, 255, 255, 0.1)',
+                        border: 'none',
+                        color: '#fff',
+                        borderRadius: '4px',
+                        fontWeight: 800,
+                      }}
+                      onClick={() => {
+                        const stepKg = units === 'imperial' ? 1.0 / KG_TO_LB : 0.5;
                         setExerciseForms((prev) => {
-                          const clone = JSON.parse(JSON.stringify(prev));
+                          const clone = JSON.parse(JSON.stringify(prev)) as ExerciseFormItem[];
                           if (clone[exIdx]) {
-                            clone[exIdx].added_weight_kg = Math.max(0, weightKg);
+                            clone[exIdx].added_weight_kg = Math.max(
+                              0,
+                              Math.round((clone[exIdx].added_weight_kg - stepKg) * 10) / 10
+                            );
                           }
                           return clone;
                         });
                       }}
+                    >
+                      -
+                    </button>
+                    <span style={{ minWidth: '48px', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: 'var(--m-cyan)' }}>
+                      +{units === 'imperial'
+                        ? `${((ex.added_weight_kg || 0) * KG_TO_LB).toFixed(1)}lb`
+                        : `${(ex.added_weight_kg || 0).toFixed(1)}kg`}
+                    </span>
+                    <button
+                      type="button"
                       style={{
-                        width: '54px',
-                        padding: '0.2rem 0.35rem',
+                        width: '26px',
+                        height: '26px',
+                        background: 'rgba(255, 255, 255, 0.1)',
+                        border: 'none',
+                        color: '#fff',
                         borderRadius: '4px',
-                        background: 'rgba(255, 255, 255, 0.08)',
-                        border: '1px solid var(--m-border)',
-                        color: 'var(--m-text-main)',
-                        fontSize: '0.8rem',
-                        textAlign: 'center',
+                        fontWeight: 800,
                       }}
-                    />
+                      onClick={() => {
+                        const stepKg = units === 'imperial' ? 1.0 / KG_TO_LB : 0.5;
+                        setExerciseForms((prev) => {
+                          const clone = JSON.parse(JSON.stringify(prev)) as ExerciseFormItem[];
+                          if (clone[exIdx]) {
+                            clone[exIdx].added_weight_kg =
+                              Math.round((clone[exIdx].added_weight_kg + stepKg) * 10) / 10;
+                          }
+                          return clone;
+                        });
+                      }}
+                    >
+                      +
+                    </button>
                   </div>
                   <button
                     type="button"
@@ -485,7 +520,7 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
               onClick={handleDelete}
               disabled={saving}
             >
-              Delete
+              {confirmingDelete ? 'Confirm Delete?' : 'Delete'}
             </button>
           )}
           <button

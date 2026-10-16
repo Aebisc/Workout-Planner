@@ -35,6 +35,7 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
   const [calibSheetOpen, setCalibSheetOpen] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [customCalibDate, setCustomCalibDate] = useState<string>('');
+  const [draftRefreshTick, setDraftRefreshTick] = useState(0);
 
   const ribbonStripRef = useRef<HTMLDivElement>(null);
   const todayNodeRef = useRef<HTMLDivElement>(null);
@@ -159,6 +160,7 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
   };
 
   const getSessionDraftCount = (sessionNum: number): number => {
+    void draftRefreshTick;
     try {
       const raw = sessionStorage.getItem(`mgp_active_session_${sessionNum}`);
       if (!raw) return 0;
@@ -523,10 +525,16 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
                       <button
                         type="button"
                         className="m-btn m-btn-secondary"
-                        style={{ height: '38px', fontSize: '0.8rem' }}
-                        onClick={() => onSelectSession(sessNumber)}
+                        style={{ height: '38px', fontSize: '0.8rem', color: 'var(--m-text-muted)' }}
+                        onClick={() => {
+                          try {
+                            sessionStorage.removeItem(`mgp_active_session_${sessNumber}`);
+                          } catch {}
+                          setDraftRefreshTick((t) => t + 1);
+                          onSelectSession(sessNumber);
+                        }}
                       >
-                        Restart / Edit Session
+                        ↺ Discard Draft & Start Fresh
                       </button>
                     </div>
                   ) : (
