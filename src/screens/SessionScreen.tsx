@@ -12,6 +12,7 @@ import {
   Settings,
 } from '../types';
 import { formatBackpackLoad } from '../utils/units';
+import { registerModalBackHandler } from '../utils/androidBack';
 import {
   formatTimerMMSS,
   getOptimalRestSeconds,
@@ -142,6 +143,13 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
     suggestions: ProgressionSuggestion[];
     deloadCycleCompleted: boolean;
   } | null>(null);
+
+  useEffect(() => {
+    if (sessionCompletedSummary) {
+      return registerModalBackHandler('session-completed', () => setSessionCompletedSummary(null));
+    }
+  }, [sessionCompletedSummary]);
+
   const [appliedSuggestions, setAppliedSuggestions] = useState<Record<string, boolean>>({});
   const [restoredDeload, setRestoredDeload] = useState<boolean>(false);
 

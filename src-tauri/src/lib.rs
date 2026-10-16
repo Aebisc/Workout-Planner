@@ -8,6 +8,7 @@ pub mod volume;
 
 use models::{Exercise, MuscleWeights, WarningTiersData};
 use std::collections::HashMap;
+#[cfg(desktop)]
 use tauri::Manager;
 
 pub static EXERCISES_JSON: &str = include_str!("../data/exercises.json");
@@ -31,11 +32,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            if let Some(icon) = app.default_window_icon() {
-                for (_label, window) in app.webview_windows() {
-                    let _ = window.set_icon(icon.clone());
+            #[cfg(desktop)]
+            {
+                if let Some(icon) = app.default_window_icon() {
+                    for (_label, window) in app.webview_windows() {
+                        let _ = window.set_icon(icon.clone());
+                    }
                 }
             }
+            #[cfg(mobile)]
+            let _ = app;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

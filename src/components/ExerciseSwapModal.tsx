@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Exercise, Muscle } from '../types';
+import { registerModalBackHandler } from '../utils/androidBack';
 
 interface ExerciseSwapModalProps {
   isOpen: boolean;
@@ -26,6 +27,12 @@ export const ExerciseSwapModal: React.FC<ExerciseSwapModalProps> = ({
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      return registerModalBackHandler('exercise-swap', onClose);
+    }
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (isOpen) {

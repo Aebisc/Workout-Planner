@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { CompletedSession, Exercise, Plan, SessionExerciseSummary, SetLog, Units } from '../types';
+import { registerModalBackHandler } from '../utils/androidBack';
 import { KG_TO_LB } from '../utils/units';
 
 interface ExerciseFormState {
@@ -47,6 +48,12 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
   const [saving, setSaving] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
   const [exercisesMap, setExercisesMap] = useState<Record<string, Exercise>>({});
+
+  useEffect(() => {
+    if (isOpen) {
+      return registerModalBackHandler('edit-session', onClose);
+    }
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (!isOpen) return;

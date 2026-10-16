@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build --apk",
+    "build:apk": "powershell -ExecutionPolicy Bypass -File ./build-apk.ps1"
   },
   "dependencies": {
     "react": "^19.1.0",

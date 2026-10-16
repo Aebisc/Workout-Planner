@@ -6,6 +6,9 @@ import { PlanOverviewScreen } from './screens/PlanOverviewScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { Plan, Settings } from './types';
+import { popModalBackHandler } from './utils/androidBack';
+import { useIsMobile } from './utils/useIsMobile';
+import { MobileApp } from './mobile/MobileApp';
 import './App.css';
 
 type ActiveTab = 'overview' | 'session' | 'dashboard' | 'settings' | 'onboarding';
@@ -17,8 +20,49 @@ export function App() {
   const [selectedSessionNumber, setSelectedSessionNumber] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const refreshState = async () => {
-    setLoading(true);
+  const navigateTo = (newTab: ActiveTab, sessNum?: number) => {
+    if (sessNum !== undefined) {
+      setSelectedSessionNumber(sessNum);
+    }
+    if (newTab !== tab) {
+      window.history.pushState(
+        { tab: newTab, sessionNumber: sessNum ?? selectedSessionNumber },
+        ''
+      );
+      setTab(newTab);
+    }
+  };
+
+  useEffect(() => {
+    if (!window.history.state) {
+      window.history.replaceState({ tab: 'overview' }, '');
+    }
+
+    const handlePopState = (e: PopStateEvent) => {
+      // On mobile, MobileApp handles back navigation
+      if (window.innerWidth <= 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+        return;
+      }
+
+      // 1. If an open modal was closed by back button, consume event
+      if (popModalBackHandler()) {
+        return;
+      }
+
+      // 2. Otherwise navigate to the tab from history state
+      const targetTab: ActiveTab = e.state?.tab || 'overview';
+      if (e.state?.sessionNumber) {
+        setSelectedSessionNumber(e.state.sessionNumber);
+      }
+      setTab(targetTab);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const refreshState = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [currentSettings, currentPlan, profile] = await Promise.all([
         api.getSettings(),
@@ -29,21 +73,23 @@ export function App() {
       setSettings(currentSettings);
       setPlan(currentPlan);
 
-      // If no estimated max reps recorded yet and no plan, start on onboarding
+      // Only route to onboarding if never calibrated and no plan exists
       const hasCalibrated = Object.keys(profile.estimated_max_reps).length > 0;
-      if (!hasCalibrated || !currentPlan) {
+      if (!hasCalibrated && !currentPlan) {
         setTab('onboarding');
       }
     } catch (err) {
       console.error('Failed to load initial app state:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     refreshState();
   }, []);
+
+  const isMobile = useIsMobile();
 
   if (loading) {
     return (
@@ -54,11 +100,23 @@ export function App() {
     );
   }
 
+  if (isMobile) {
+    return (
+      <MobileApp
+        plan={plan}
+        settings={settings}
+        refreshState={refreshState}
+        initialTab={tab}
+        onNavigate={(newTab) => setTab(newTab)}
+      />
+    );
+  }
+
   return (
     <div className="app-container">
       {/* Top Desktop Navigation Bar */}
       <header className="app-header">
-        <div className="app-brand" onClick={() => setTab('overview')}>
+        <div className="app-brand" onClick={() => navigateTo('overview')}>
           <img src="/app-icon.png" alt="Icon" className="brand-icon-img" />
           <h1>Muscle Growth Planner</h1>
         </div>
@@ -67,25 +125,25 @@ export function App() {
           <nav className="nav-tabs">
             <button
               className={`nav-tab ${tab === 'overview' ? 'active' : ''}`}
-              onClick={() => setTab('overview')}
+              onClick={() => navigateTo('overview')}
             >
               📋 Schedule
             </button>
             <button
               className={`nav-tab ${tab === 'dashboard' ? 'active' : ''}`}
-              onClick={() => setTab('dashboard')}
+              onClick={() => navigateTo('dashboard')}
             >
               📊 Volume & Warnings
             </button>
             <button
               className={`nav-tab ${tab === 'settings' ? 'active' : ''}`}
-              onClick={() => setTab('settings')}
+              onClick={() => navigateTo('settings')}
             >
               ⚙ Settings
             </button>
             <button
               className="nav-tab nav-tab-subtle"
-              onClick={() => setTab('onboarding')}
+              onClick={() => navigateTo('onboarding')}
               title="Recalibrate 1RM baselines"
             >
               🎯 Recalibrate
@@ -100,7 +158,7 @@ export function App() {
           <OnboardingScreen
             onComplete={async () => {
               await refreshState();
-              setTab('overview');
+              navigateTo('overview');
             }}
           />
         )}
@@ -110,11 +168,10 @@ export function App() {
             plan={plan}
             settings={settings}
             onSelectSession={(sessNum) => {
-              setSelectedSessionNumber(sessNum);
-              setTab('session');
+              navigateTo('session', sessNum);
             }}
             onRefreshPlan={refreshState}
-            onOpenSettings={() => setTab('settings')}
+            onOpenSettings={() => navigateTo('settings')}
           />
         )}
 
@@ -124,7 +181,11 @@ export function App() {
             settings={settings}
             onBackToOverview={async () => {
               await refreshState();
-              setTab('overview');
+              if (window.history.state?.tab === 'session') {
+                window.history.back();
+              } else {
+                navigateTo('overview');
+              }
             }}
           />
         )}

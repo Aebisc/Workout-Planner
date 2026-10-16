@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { EditSessionModal } from '../components/EditSessionModal';
 import { CompletedSession, Exercise, Muscle, Plan, Settings, Warning } from '../types';
+import { registerModalBackHandler } from '../utils/androidBack';
 import { formatWeight } from '../utils/units';
 
 interface DashboardScreenProps {
@@ -23,6 +24,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [deloadSuccess, setDeloadSuccess] = useState<string | null>(null);
   const [deloadLoading, setDeloadLoading] = useState<boolean>(false);
   const [editingSession, setEditingSession] = useState<CompletedSession | null>(null);
+
+  useEffect(() => {
+    if (confirmingDeload) {
+      return registerModalBackHandler('deload-confirm', () => setConfirmingDeload(false));
+    }
+  }, [confirmingDeload]);
 
   const loadDashboardData = () => {
     Promise.all([api.getWarnings(), api.getExercises(), api.getSessionHistory()])

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CompletedSession, Plan } from '../types';
+import { registerModalBackHandler } from '../utils/androidBack';
 import {
   buildCyclePattern,
   deriveCycleAnchorFromHistory,
@@ -36,6 +37,12 @@ export const CycleCalibrationModal: React.FC<CycleCalibrationModalProps> = ({
 
   const [anchorInput, setAnchorInput] = useState<string>(currentAnchorDate || todayKey);
   const [savedStatus, setSavedStatus] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      return registerModalBackHandler('cycle-calib', onClose);
+    }
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (isOpen && currentAnchorDate) {

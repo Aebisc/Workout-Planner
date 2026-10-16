@@ -2964,6 +2964,134 @@ input:checked + .slider:before {
   background: #10b981;
 }
 
+/* ==========================================================================
+   Android & Mobile Responsive Adaptations (<= 680px)
+   ========================================================================== */
+@media (max-width: 680px) {
+  .app-container {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-header {
+    padding: 0.7rem 1rem;
+    justify-content: center;
+  }
+
+  /* Transform top nav-tabs into a native-style fixed Bottom Navigation Bar on mobile */
+  .nav-tabs {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 90;
+    background: rgba(9, 13, 22, 0.94);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 0;
+    border: none;
+    border-top: 1px solid var(--border-color);
+    padding: 0.45rem 0.5rem calc(0.45rem + env(safe-area-inset-bottom, 0px));
+    justify-content: space-around;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.6);
+  }
+
+  .nav-tab {
+    flex: 1;
+    justify-content: center;
+    padding: 0.5rem 0.35rem;
+    font-size: 0.76rem;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .nav-tab-subtle {
+    margin-left: 0;
+  }
+
+  .main-content {
+    padding: 1rem 0.85rem;
+  }
+
+  .card {
+    padding: 1.15rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Sticky rest timer adjusts to slimmer mobile top bar */
+  .rest-timer-banner {
+    top: 54px;
+    padding: 0.85rem 1rem;
+  }
+
+  .rest-timer-main {
+    gap: 0.65rem;
+  }
+
+  .rest-timer-digits {
+    font-size: 1.35rem;
+  }
+
+  .rest-timer-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Session logger inputs & RIR buttons stack cleanly on narrow phones */
+  .log-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .input-field {
+    width: 100%;
+  }
+
+  .segmented-control {
+    width: 100%;
+    display: flex;
+  }
+
+  .segmented-btn {
+    flex: 1;
+    padding: 0.5rem 0.25rem;
+    font-size: 0.78rem;
+    text-align: center;
+  }
+
+  .btn-log {
+    width: 100%;
+    height: 46px;
+  }
+
+  /* 14-day ribbon: 7 columns x 2 rows with comfortable touch targets */
+  .opt3-nodes-row {
+    grid-template-columns: repeat(7, 1fr);
+    gap: 0.25rem;
+  }
+
+  /* Modals slide/fit cleanly on mobile screens */
+  .modal-overlay,
+  .completion-modal-overlay {
+    padding: 0.75rem;
+  }
+
+  .modal-content,
+  .completion-modal-card,
+  .edit-session-modal,
+  .modern-calib-modal {
+    padding: 1.15rem;
+    max-height: 92vh;
+  }
+
+  .edit-sets-head,
+  .edit-set-row {
+    grid-template-columns: 52px 72px 1fr 36px;
+    gap: 0.35rem;
+  }
+}
+
+
 
 
 
