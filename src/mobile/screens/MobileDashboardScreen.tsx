@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api';
-import { CompletedSession, Exercise, Muscle, Plan, Settings, Warning } from '../../types';
+import { Exercise, Muscle, Plan, Settings, Warning } from '../../types';
 import { BottomSheet } from '../components/BottomSheet';
-import { MobileEditSessionSheet } from '../components/MobileEditSessionSheet';
 
 interface MobileDashboardScreenProps {
   plan: Plan | null;
@@ -17,20 +16,12 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
 }) => {
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [exercises, setExercises] = useState<Exercise[]>([]);
-  const [history, setHistory] = useState<CompletedSession[]>([]);
-  const [editingSession, setEditingSession] = useState<CompletedSession | null>(null);
-  const [editSheetOpen, setEditSheetOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [deloadLoading, setDeloadLoading] = useState(false);
   const [deloadSuccess, setDeloadSuccess] = useState<string | null>(null);
   const [showDeloadConfirmSheet, setShowDeloadConfirmSheet] = useState(false);
 
-  const fetchHistory = () => {
-    api.getSessionHistory().then(setHistory).catch(console.error);
-  };
-
   useEffect(() => {
-    fetchHistory();
     Promise.all([api.getWarnings(), api.getExercises()])
       .then(([w, ex]) => {
         setWarnings(w);
@@ -315,92 +306,6 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
         ))}
       </div>
 
-      {/* Past Sessions History Section */}
-      <div className="m-grouped-section" style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
-        <div className="m-section-title">Workout History ({history.length})</div>
-        {history.length === 0 ? (
-          <div className="m-card" style={{ textAlign: 'center', padding: '1.5rem 1rem' }}>
-            <p style={{ color: 'var(--m-text-muted)', fontSize: '0.88rem', margin: 0 }}>
-              No completed workouts logged yet. Finish a workout to track volume history!
-            </p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {history.slice(0, 15).map((sess) => {
-              const dateStr = new Date(sess.timestamp).toLocaleDateString(undefined, {
-                weekday: 'short',
-                month: 'short',
-                day: 'numeric',
-              });
-              return (
-                <div
-                  key={sess.id}
-                  className="m-card"
-                  style={{
-                    padding: '0.85rem 1rem',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.5rem',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--m-cyan)' }}>
-                          Session {sess.session_number}
-                        </span>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--m-text-muted)' }}>
-                          • {dateStr}
-                        </span>
-                      </div>
-                      <h4 style={{ margin: '0.15rem 0', fontSize: '0.95rem', color: 'var(--m-text-main)' }}>
-                        {sess.focus.join(' & ')}
-                      </h4>
-                    </div>
-                    <button
-                      type="button"
-                      style={{
-                        background: 'rgba(99, 102, 241, 0.15)',
-                        border: '1px solid rgba(99, 102, 241, 0.3)',
-                        color: 'var(--m-cyan)',
-                        borderRadius: '4px',
-                        padding: '0.25rem 0.55rem',
-                        fontSize: '0.78rem',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => {
-                        setEditingSession(sess);
-                        setEditSheetOpen(true);
-                      }}
-                    >
-                      ✏️ Edit
-                    </button>
-                  </div>
-
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                    {sess.exercises_summary.map((ex) => (
-                      <span
-                        key={ex.exercise_id}
-                        style={{
-                          fontSize: '0.72rem',
-                          background: 'rgba(255, 255, 255, 0.06)',
-                          padding: '0.2rem 0.5rem',
-                          borderRadius: '4px',
-                          color: 'var(--m-text-muted)',
-                        }}
-                      >
-                        {ex.exercise_name} ({ex.sets_completed}s)
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
       {/* Deload Confirmation Bottom Sheet */}
       <BottomSheet
         isOpen={showDeloadConfirmSheet}
@@ -435,19 +340,6 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
           </div>
         </div>
       </BottomSheet>
-
-      {/* Edit Session BottomSheet */}
-      <MobileEditSessionSheet
-        isOpen={editSheetOpen}
-        onClose={() => setEditSheetOpen(false)}
-        sessionToEdit={editingSession}
-        plan={plan || undefined}
-        units={settings.units}
-        onSaved={async () => {
-          fetchHistory();
-          await onPlanUpdated();
-        }}
-      />
     </div>
   );
 };

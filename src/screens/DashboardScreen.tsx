@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
-import { EditSessionModal } from '../components/EditSessionModal';
-import { CompletedSession, Exercise, Muscle, Plan, Settings, Warning } from '../types';
+import { Exercise, Muscle, Plan, Settings, Warning } from '../types';
 import { registerModalBackHandler } from '../utils/androidBack';
-import { formatWeight } from '../utils/units';
 
 interface DashboardScreenProps {
   plan: Plan | null;
@@ -18,12 +16,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 }) => {
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [exercises, setExercises] = useState<Exercise[]>([]);
-  const [sessionHistory, setSessionHistory] = useState<CompletedSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirmingDeload, setConfirmingDeload] = useState<boolean>(false);
   const [deloadSuccess, setDeloadSuccess] = useState<string | null>(null);
   const [deloadLoading, setDeloadLoading] = useState<boolean>(false);
-  const [editingSession, setEditingSession] = useState<CompletedSession | null>(null);
 
   useEffect(() => {
     if (confirmingDeload) {
@@ -32,11 +28,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   }, [confirmingDeload]);
 
   const loadDashboardData = () => {
-    Promise.all([api.getWarnings(), api.getExercises(), api.getSessionHistory()])
-      .then(([w, ex, history]) => {
+    Promise.all([api.getWarnings(), api.getExercises()])
+      .then(([w, ex]) => {
         setWarnings(w);
         setExercises(ex);
-        setSessionHistory(history);
       })
       .finally(() => setLoading(false));
   };
@@ -359,107 +354,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </li>
         </ul>
       </div>
-
-      {/* Sessions History Section */}
-      <div className="card mt-4 sessions-history-section">
-        <div className="section-header-row">
-          <h3>Sessions History</h3>
-          <span className="badge badge-outline">
-            {sessionHistory.length} Completed Session{sessionHistory.length === 1 ? '' : 's'}
-          </span>
-        </div>
-
-        {sessionHistory.length === 0 ? (
-          <div className="empty-history-box">
-            <span className="empty-history-icon">🏋️</span>
-            <p className="empty-history-title">No completed sessions logged yet</p>
-            <p className="empty-history-desc">
-              Complete your planned workout in the Schedule tab and tap the <strong>Done</strong> button to log your workout here.
-            </p>
-          </div>
-        ) : (
-          <div className="sessions-history-list">
-            {sessionHistory.map((s) => {
-              const dateStr = new Date(s.timestamp).toLocaleDateString(undefined, {
-                weekday: 'short',
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric',
-              });
-              const timeStr = new Date(s.timestamp).toLocaleTimeString(undefined, {
-                hour: '2-digit',
-                minute: '2-digit',
-              });
-
-              return (
-                <div key={s.id} className="session-history-item card">
-                  <div className="session-history-item-header">
-                    <div className="session-history-title-group">
-                      <h4>Session {s.session_number}</h4>
-                      <span className="session-history-date">
-                        {dateStr} • {timeStr}
-                      </span>
-                    </div>
-
-                    <div className="session-history-badges">
-                      <div className="focus-pills">
-                        {s.focus.map((m) => (
-                          <span key={m} className="pill pill-focus">
-                            {m.toUpperCase()}
-                          </span>
-                        ))}
-                      </div>
-                      <span className="badge badge-primary">{s.total_sets} Sets Completed</span>
-                      <button
-                        type="button"
-                        className="btn btn-outline btn-sm ml-2"
-                        onClick={() => setEditingSession(s)}
-                        title="Modify accurate workout numbers"
-                      >
-                        ✏️ Modify Numbers
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="session-history-exercises-table">
-                    {s.exercises_summary.map((ex, idx) => {
-                      const isTimeBased = exercises.find((e) => e.id === ex.exercise_id)?.time_based ?? false;
-                      return (
-                        <div key={idx} className="history-exercise-line">
-                          <div className="history-ex-name-col">
-                            <strong>{ex.exercise_name}</strong>
-                            <span className="history-ex-load">
-                              {formatWeight(ex.added_weight_kg, settings.units)}
-                            </span>
-                          </div>
-                          <div className="history-ex-reps-col">
-                            {ex.reps_or_seconds.map((r, rIdx) => (
-                              <span key={rIdx} className="history-rep-pill">
-                                Set {rIdx + 1}: {r}{isTimeBased ? 's' : ' reps'}
-                              </span>
-                            ))}
-                          </div>
-                          <div className="history-ex-rir-col">
-                            Avg RIR {ex.avg_rir.toFixed(1)}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <EditSessionModal
-        isOpen={editingSession !== null}
-        onClose={() => setEditingSession(null)}
-        sessionToEdit={editingSession}
-        onSaved={loadDashboardData}
-        units={settings.units}
-      />
     </div>
   );
 };

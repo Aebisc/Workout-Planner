@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type MobileTab = 'workouts' | 'analytics' | 'settings';
+export type MobileTab = 'workouts' | 'analytics' | 'history' | 'settings';
 
 interface MobileBottomNavProps {
   activeTab: MobileTab;
@@ -29,6 +29,15 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       >
         <span className="mobile-nav-icon">📊</span>
         <span>Volume</span>
+      </button>
+
+      <button
+        type="button"
+        className={`mobile-nav-item ${activeTab === 'history' ? 'active' : ''}`}
+        onClick={() => onTabChange('history')}
+      >
+        <span className="mobile-nav-icon">📜</span>
+        <span>History</span>
       </button>
 
       <button

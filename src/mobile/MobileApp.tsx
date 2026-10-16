@@ -5,6 +5,7 @@ import { MobileBottomNav, MobileTab } from './components/MobileBottomNav';
 import { MobilePlanScreen } from './screens/MobilePlanScreen';
 import { MobileSessionScreen } from './screens/MobileSessionScreen';
 import { MobileDashboardScreen } from './screens/MobileDashboardScreen';
+import { MobileHistoryScreen } from './screens/MobileHistoryScreen';
 import { MobileSettingsScreen } from './screens/MobileSettingsScreen';
 import { MobileOnboardingScreen } from './screens/MobileOnboardingScreen';
 import { popModalBackHandler } from '../utils/androidBack';
@@ -14,8 +15,8 @@ interface MobileAppProps {
   plan: Plan | null;
   settings: Settings | null;
   refreshState: (silent?: boolean) => Promise<void>;
-  initialTab?: 'overview' | 'session' | 'dashboard' | 'settings' | 'onboarding';
-  onNavigate?: (tab: 'overview' | 'session' | 'dashboard' | 'settings' | 'onboarding') => void;
+  initialTab?: 'overview' | 'session' | 'dashboard' | 'history' | 'settings' | 'onboarding';
+  onNavigate?: (tab: 'overview' | 'session' | 'dashboard' | 'history' | 'settings' | 'onboarding') => void;
 }
 
 export const MobileApp: React.FC<MobileAppProps> = ({
@@ -28,6 +29,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   // Mobile active view: bottom tabs or stack screen
   const [activeTab, setActiveTab] = useState<MobileTab>(() => {
     if (initialTab === 'dashboard') return 'analytics';
+    if (initialTab === 'history') return 'history';
     if (initialTab === 'settings') return 'settings';
     return 'workouts';
   });
@@ -47,6 +49,9 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     } else if (initialTab === 'dashboard') {
       setActiveStack(null);
       setActiveTab('analytics');
+    } else if (initialTab === 'history') {
+      setActiveStack(null);
+      setActiveTab('history');
     } else if (initialTab === 'settings') {
       setActiveStack(null);
       setActiveTab('settings');
@@ -123,6 +128,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     if (activeStack === 'onboarding') return 'Strength Calibration';
     if (activeTab === 'workouts') return 'Muscle Growth Planner';
     if (activeTab === 'analytics') return 'Volume Analytics';
+    if (activeTab === 'history') return 'Workout History';
     if (activeTab === 'settings') return 'Settings';
     return 'Muscle Growth Planner';
   };
@@ -222,6 +228,14 @@ export const MobileApp: React.FC<MobileAppProps> = ({
         />
       )}
 
+      {!activeStack && activeTab === 'history' && (
+        <MobileHistoryScreen
+          plan={plan}
+          settings={settings}
+          onPlanUpdated={() => refreshState(true)}
+        />
+      )}
+
       {!activeStack && activeTab === 'settings' && settings && (
         <MobileSettingsScreen
           initialSettings={settings}
@@ -245,6 +259,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
             setActiveTab(tab);
             if (tab === 'workouts') onNavigate?.('overview');
             else if (tab === 'analytics') onNavigate?.('dashboard');
+            else if (tab === 'history') onNavigate?.('history');
             else if (tab === 'settings') onNavigate?.('settings');
           }}
         />

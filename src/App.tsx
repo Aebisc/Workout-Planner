@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { DashboardScreen } from './screens/DashboardScreen';
+import { HistoryScreen } from './screens/HistoryScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
 import { PlanOverviewScreen } from './screens/PlanOverviewScreen';
 import { SessionScreen } from './screens/SessionScreen';
@@ -11,7 +12,7 @@ import { useIsMobile } from './utils/useIsMobile';
 import { MobileApp } from './mobile/MobileApp';
 import './App.css';
 
-type ActiveTab = 'overview' | 'session' | 'dashboard' | 'settings' | 'onboarding';
+type ActiveTab = 'overview' | 'session' | 'dashboard' | 'history' | 'settings' | 'onboarding';
 
 export function App() {
   const [tab, setTab] = useState<ActiveTab>('overview');
@@ -136,6 +137,12 @@ export function App() {
               📊 Volume & Warnings
             </button>
             <button
+              className={`nav-tab ${tab === 'history' ? 'active' : ''}`}
+              onClick={() => navigateTo('history')}
+            >
+              📜 History
+            </button>
+            <button
               className={`nav-tab ${tab === 'settings' ? 'active' : ''}`}
               onClick={() => navigateTo('settings')}
             >
@@ -194,6 +201,14 @@ export function App() {
           <DashboardScreen
             plan={plan}
             settings={settings}
+            onPlanUpdated={refreshState}
+          />
+        )}
+
+        {tab === 'history' && settings && (
+          <HistoryScreen
+            settings={settings}
+            plan={plan}
             onPlanUpdated={refreshState}
           />
         )}
