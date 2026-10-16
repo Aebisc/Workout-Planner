@@ -2,6 +2,7 @@ import React from 'react';
 
 interface MobileHeaderProps {
   title: string;
+  subtitle?: string;
   showBack?: boolean;
   onBack?: () => void;
   rightAction?: React.ReactNode;
@@ -9,6 +10,7 @@ interface MobileHeaderProps {
 
 export const MobileHeader: React.FC<MobileHeaderProps> = ({
   title,
+  subtitle,
   showBack,
   onBack,
   rightAction,
@@ -23,18 +25,17 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
             onClick={onBack}
             aria-label="Back"
           >
-            ‹ Back
+            <span className="mobile-back-arrow">←</span>
+            <span>Back</span>
           </button>
         ) : (
-          <div className="mobile-header-logo-wrap">
-            <img src="/app-icon.png" alt="MGP" className="mobile-header-logo" />
-            <h1 className="mobile-header-title">{title}</h1>
-          </div>
+          <img src="/app-icon.png" alt="MGP" className="mobile-header-logo" />
         )}
+        <div className="mobile-header-titles">
+          <h1 className="mobile-header-title">{title}</h1>
+          {subtitle && <span className="mobile-header-subtitle">{subtitle}</span>}
+        </div>
       </div>
-
-      {showBack && <h2 className="mobile-header-title">{title}</h2>}
-
       <div className="mobile-header-right">{rightAction}</div>
     </header>
   );

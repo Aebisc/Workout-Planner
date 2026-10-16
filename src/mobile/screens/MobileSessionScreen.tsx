@@ -73,13 +73,16 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
   // Finishing session state
   const [submittingSession, setSubmittingSession] = useState<boolean>(false);
   const [progressionSuggestions, setProgressionSuggestions] = useState<ProgressionSuggestion[]>([]);
+  const [appliedSuggestions, setAppliedSuggestions] = useState<Record<string, boolean>>({});
+  const [restoredDeload, setRestoredDeload] = useState<boolean>(false);
   const [completedSummary, setCompletedSummary] = useState<{
     sessionNumber: number;
     totalSets: number;
     exercises: SessionExerciseSummary[];
+    deloadCycleCompleted?: boolean;
   } | null>(null);
 
-  // Drift-free countdown timer effect
+  // Drift-free countdown timer effect (prevents infinite chime loop)
   useEffect(() => {
     if (!restTimer || !restTimer.isActive) return;
 
@@ -89,12 +92,18 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
 
       if (remaining <= 0) {
         playRestCompleteChime(soundEnabled);
+        try {
+          navigator.vibrate?.([200, 100, 200]);
+        } catch {
+          // Ignore vibration if unsupported
+        }
         setRestTimer((prev) =>
           prev
             ? {
                 ...prev,
-                remainingSeconds: 0,
+                isActive: false,
                 isFinished: true,
+                remainingSeconds: 0,
               }
             : null
         );
@@ -111,7 +120,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     }, 250);
 
     return () => window.clearInterval(interval);
-  }, [restTimer, soundEnabled]);
+  }, [restTimer?.isActive, restTimer?.endTimeMs, soundEnabled]);
 
   const loadData = async () => {
     try {
@@ -231,12 +240,16 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
 
   const handleAdjustTimer = (delta: number) => {
     if (!restTimer) return;
-    const newRemaining = Math.max(5, restTimer.remainingSeconds + delta);
+    const currentRemaining = restTimer.isActive
+      ? Math.max(0, Math.ceil((restTimer.endTimeMs - Date.now()) / 1000))
+      : restTimer.remainingSeconds;
+    const newRemaining = Math.max(5, currentRemaining + delta);
     setRestTimer({
       ...restTimer,
+      isActive: true,
+      isFinished: false,
       remainingSeconds: newRemaining,
       endTimeMs: Date.now() + newRemaining * 1000,
-      isFinished: false,
     });
   };
 
@@ -286,10 +299,43 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
         sessionNumber: session.session_number,
         totalSets: allLoggedSets.length,
         exercises: summaries,
+        deloadCycleCompleted: response.deload_cycle_completed,
       });
     } catch (err) {
       alert(`Failed to save session: ${err}`);
       setSubmittingSession(false);
+    }
+  };
+
+  const handleApplyProgression = async (
+    sugg: ProgressionSuggestion,
+    params: {
+      newExerciseId?: string | null;
+      newAddedWeightKg?: number | null;
+      newTempoCue?: string | null;
+    },
+    actionKey: string
+  ) => {
+    try {
+      await api.applyProgression({
+        sessionNumber: sugg.session_number,
+        blockIndex: sugg.block_index,
+        ...params,
+      });
+      setAppliedSuggestions((prev) => ({ ...prev, [actionKey]: true }));
+      await loadData();
+    } catch (err) {
+      alert(`Failed to apply progression: ${err}`);
+    }
+  };
+
+  const handleRestoreDeload = async () => {
+    try {
+      await api.restoreDeloadPlan();
+      setRestoredDeload(true);
+      await loadData();
+    } catch (err) {
+      alert(`Failed to restore deload plan: ${err}`);
     }
   };
 
@@ -357,7 +403,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
       {/* Current Active Exercise Card */}
       <div className="m-card" style={{ border: '1px solid var(--m-border-active)', padding: '1.25rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
+          <div style={{ flex: 1, paddingRight: '0.5rem' }}>
             <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--m-primary)', textTransform: 'uppercase' }}>
               Exercise {activeBlockIndex + 1} of {session.blocks.length}
             </span>
@@ -372,6 +418,18 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
                 {activeBlock.tempo_cue}
               </span>
             </div>
+
+            {/* Rest Target and Form Cues */}
+            {activeBlock.rest_cue && (
+              <div style={{ fontSize: '0.78rem', color: 'var(--m-cyan)', marginTop: '0.45rem', fontWeight: 600 }}>
+                ⏱️ Rest: {activeBlock.rest_cue}
+              </div>
+            )}
+            {activeEx && activeEx.cues && (
+              <div style={{ fontSize: '0.78rem', color: 'var(--m-text-muted)', marginTop: '0.35rem', fontStyle: 'italic', lineHeight: 1.35 }}>
+                💡 {activeEx.cues}
+              </div>
+            )}
           </div>
 
           <button
@@ -385,6 +443,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
               padding: '0.4rem 0.65rem',
               borderRadius: 'var(--m-radius-sm)',
               cursor: 'pointer',
+              flexShrink: 0,
             }}
             onClick={() =>
               setSwapSheet({
@@ -470,6 +529,25 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
                 </button>
               ))}
             </div>
+
+            {/* 4+ RIR Notice */}
+            {currentInput.rir >= 4 && (
+              <div
+                style={{
+                  marginTop: '0.65rem',
+                  padding: '0.45rem 0.75rem',
+                  borderRadius: 'var(--m-radius-sm)',
+                  background: 'rgba(245, 158, 11, 0.15)',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  color: 'var(--m-amber)',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  lineHeight: 1.35,
+                }}
+              >
+                ⚠️ Sets at 4+ RIR do not count toward effective hypertrophy volume.
+              </div>
+            )}
           </div>
 
           <button
@@ -519,6 +597,26 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
             ))}
           </div>
         )}
+
+        {/* Next Exercise Quick Transition Button */}
+        {blockLogs.length >= activeBlock.sets && activeBlockIndex < session.blocks.length - 1 && (
+          <button
+            type="button"
+            className="m-btn m-btn-secondary"
+            style={{
+              marginTop: '1rem',
+              width: '100%',
+              height: '48px',
+              fontWeight: 800,
+              border: '1px solid var(--m-primary)',
+              color: 'var(--m-cyan)',
+              background: 'rgba(99, 102, 241, 0.15)',
+            }}
+            onClick={() => setActiveBlockIndex((prev) => prev + 1)}
+          >
+            Next Exercise: {exercises[session.blocks[activeBlockIndex + 1]?.exercise_id]?.name || session.blocks[activeBlockIndex + 1]?.exercise_id.replace(/_/g, ' ')} →
+          </button>
+        )}
       </div>
 
       {/* Finish Workout Action */}
@@ -550,6 +648,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
         muscle={swapSheet.muscle}
         currentExerciseId={swapSheet.exerciseId}
         onSwapSelected={handleSwapSelected}
+        backpackEnabled={settings.backpack}
       />
 
       {/* Completion Celebration Bottom Sheet */}
@@ -569,23 +668,196 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
           </p>
         </div>
 
+        {/* Deload Completed Notification & Restore Action */}
+        {completedSummary?.deloadCycleCompleted && (
+          <div
+            className="m-card"
+            style={{
+              background: 'rgba(6, 182, 212, 0.15)',
+              border: '1px solid rgba(6, 182, 212, 0.4)',
+              marginBottom: '1rem',
+              padding: '1rem',
+            }}
+          >
+            <h4 style={{ color: 'var(--m-cyan)', margin: '0 0 0.5rem' }}>
+              Deload Cycle Complete! 🔄
+            </h4>
+            <p style={{ fontSize: '0.85rem', color: 'var(--m-text-main)', margin: '0 0 0.75rem' }}>
+              You have completed your lighter recovery cycle. Ready to return to full training volume?
+            </p>
+            {restoredDeload ? (
+              <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.85rem' }}>
+                ✓ Full Volume Plan Restored!
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="m-btn m-btn-primary"
+                style={{ width: '100%', height: '42px', fontSize: '0.88rem' }}
+                onClick={handleRestoreDeload}
+              >
+                Restore Full Volume Plan
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Progression Suggestions with 1-Click Interactive Buttons */}
         {progressionSuggestions.length > 0 && (
-          <div className="m-card" style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+          <div className="m-card" style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', marginBottom: '1rem' }}>
             <h4 style={{ color: 'var(--m-green)', margin: '0 0 0.5rem' }}>
               Progression Earned! 🚀
             </h4>
-            {progressionSuggestions.map((sug, sIdx) => (
-              <p key={sIdx} style={{ fontSize: '0.85rem', margin: '0.25rem 0', color: 'var(--m-text-main)' }}>
-                • <strong>{sug.action.replace(/_/g, ' ')}:</strong> {sug.message}
-              </p>
-            ))}
+            {progressionSuggestions.map((sug, sIdx) => {
+              const tempoKey = `${sug.session_number}-${sug.block_index}-tempo`;
+              const advanceKey = `${sug.session_number}-${sug.block_index}-advance`;
+              const backpackKey = `${sug.session_number}-${sug.block_index}-backpack`;
+
+              return (
+                <div key={sIdx} style={{ padding: '0.65rem 0', borderBottom: sIdx < progressionSuggestions.length - 1 ? '1px solid var(--m-border)' : 'none' }}>
+                  <p style={{ fontSize: '0.85rem', margin: '0 0 0.5rem', color: 'var(--m-text-main)' }}>
+                    • <strong>{sug.action.replace(/_/g, ' ')}:</strong> {sug.message}
+                  </p>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {sug.action === 'add_intensifiers' && (
+                      <>
+                        {appliedSuggestions[tempoKey] ? (
+                          <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Applied Tempo Cue</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="m-btn m-btn-secondary"
+                            style={{ height: '36px', fontSize: '0.78rem', padding: '0 0.75rem' }}
+                            onClick={() =>
+                              handleApplyProgression(
+                                sug,
+                                { newTempoCue: sug.new_tempo_cue },
+                                tempoKey
+                              )
+                            }
+                          >
+                            Apply 3–4s Tempo & Pause Cue
+                          </button>
+                        )}
+                        {sug.next_exercise_id && (
+                          appliedSuggestions[advanceKey] ? (
+                            <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Advanced Variation</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="m-btn m-btn-primary"
+                              style={{ height: '36px', fontSize: '0.78rem', padding: '0 0.75rem' }}
+                              onClick={() =>
+                                handleApplyProgression(
+                                  sug,
+                                  { newExerciseId: sug.next_exercise_id },
+                                  advanceKey
+                                )
+                              }
+                            >
+                              ⬆ Advance to {sug.next_exercise_id.replace(/_/g, ' ')}
+                            </button>
+                          )
+                        )}
+                      </>
+                    )}
+
+                    {sug.action === 'advance_variation' && sug.next_exercise_id && (
+                      appliedSuggestions[advanceKey] ? (
+                        <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Advanced Variation</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="m-btn m-btn-primary"
+                          style={{ height: '36px', fontSize: '0.78rem', padding: '0 0.75rem' }}
+                          onClick={() =>
+                            handleApplyProgression(
+                              sug,
+                              { newExerciseId: sug.next_exercise_id },
+                              advanceKey
+                            )
+                          }
+                        >
+                          ⬆ Advance to {sug.next_exercise_id.replace(/_/g, ' ')}
+                        </button>
+                      )
+                    )}
+
+                    {sug.action === 'add_backpack_weight' && sug.new_added_weight_kg !== null && (
+                      appliedSuggestions[backpackKey] ? (
+                        <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Added Weight</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="m-btn m-btn-primary"
+                          style={{ height: '36px', fontSize: '0.78rem', padding: '0 0.75rem' }}
+                          onClick={() =>
+                            handleApplyProgression(
+                              sug,
+                              { newAddedWeightKg: sug.new_added_weight_kg },
+                              backpackKey
+                            )
+                          }
+                        >
+                          🎒 Add Backpack Load (+1.5 kg)
+                        </button>
+                      )
+                    )}
+
+                    {sug.action === 'stall_detected' && (
+                      <>
+                        {appliedSuggestions[tempoKey] ? (
+                          <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Applied Intensifier Cue</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="m-btn m-btn-secondary"
+                            style={{ height: '36px', fontSize: '0.78rem', padding: '0 0.75rem' }}
+                            onClick={() =>
+                              handleApplyProgression(
+                                sug,
+                                { newTempoCue: sug.new_tempo_cue },
+                                tempoKey
+                              )
+                            }
+                          >
+                            ⏱ Apply Intensifier Cue
+                          </button>
+                        )}
+                        {sug.next_exercise_id && (
+                          appliedSuggestions[advanceKey] ? (
+                            <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Swapped Exercise</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="m-btn m-btn-primary"
+                              style={{ height: '36px', fontSize: '0.78rem', padding: '0 0.75rem' }}
+                              onClick={() =>
+                                handleApplyProgression(
+                                  sug,
+                                  { newExerciseId: sug.next_exercise_id },
+                                  advanceKey
+                                )
+                              }
+                            >
+                              🔄 Swap to {sug.next_exercise_id.replace(/_/g, ' ')}
+                            </button>
+                          )
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
         <button
           type="button"
           className="m-btn m-btn-primary"
-          style={{ marginTop: '1.5rem' }}
+          style={{ marginTop: '1rem', width: '100%', height: '48px' }}
           onClick={onBackToOverview}
         >
           Back to Workouts ›

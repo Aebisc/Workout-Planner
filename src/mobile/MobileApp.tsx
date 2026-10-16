@@ -38,6 +38,24 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   });
   const [selectedSessionNumber, setSelectedSessionNumber] = useState<number>(1);
 
+  // Sync initialTab changes from parent
+  useEffect(() => {
+    if (initialTab === 'onboarding') {
+      setActiveStack('onboarding');
+    } else if (initialTab === 'session') {
+      setActiveStack('session');
+    } else if (initialTab === 'dashboard') {
+      setActiveStack(null);
+      setActiveTab('analytics');
+    } else if (initialTab === 'settings') {
+      setActiveStack(null);
+      setActiveTab('settings');
+    } else if (initialTab === 'overview') {
+      setActiveStack(null);
+      setActiveTab('workouts');
+    }
+  }, [initialTab]);
+
   // Handle hardware / gesture back button
   useEffect(() => {
     const handlePopState = () => {
@@ -132,6 +150,29 @@ export const MobileApp: React.FC<MobileAppProps> = ({
             onNavigate?.('settings');
           }}
         />
+      )}
+
+      {!activeStack && activeTab === 'workouts' && (!plan || !settings) && (
+        <div className="mobile-view-container" style={{ padding: '2rem 1rem', textAlign: 'center' }}>
+          <div className="m-card" style={{ padding: '2rem 1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+            <span style={{ fontSize: '3rem' }}>🎯</span>
+            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, color: 'var(--m-text-main)' }}>No Training Plan Found</h2>
+            <p style={{ color: 'var(--m-text-muted)', fontSize: '0.9rem', lineHeight: 1.5, margin: 0 }}>
+              Complete the quick baseline calibration to generate your scientific hypertrophy training plan.
+            </p>
+            <button
+              type="button"
+              className="m-btn m-btn-primary"
+              style={{ width: '100%', marginTop: '0.5rem' }}
+              onClick={() => {
+                setActiveStack('onboarding');
+                onNavigate?.('onboarding');
+              }}
+            >
+              Start Strength Calibration ›
+            </button>
+          </div>
+        </div>
       )}
 
       {!activeStack && activeTab === 'analytics' && settings && (

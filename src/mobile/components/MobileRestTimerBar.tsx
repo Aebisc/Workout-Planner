@@ -31,51 +31,74 @@ export const MobileRestTimerBar: React.FC<MobileRestTimerBarProps> = ({
 }) => {
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  if (!timer || !timer.isActive) return null;
+  if (!timer) return null;
+
+  const progressPct =
+    timer.totalSeconds > 0
+      ? Math.min(100, ((timer.totalSeconds - timer.remainingSeconds) / timer.totalSeconds) * 100)
+      : 100;
 
   return (
     <>
-      <div className="m-floating-timer">
-        <div className="m-timer-left" onClick={() => setSheetOpen(true)}>
-          <span style={{ fontSize: '1.25rem' }}>{timer.isFinished ? '🔔' : '⏱️'}</span>
-          <div>
-            <div className="m-timer-digits">{formatTimerMMSS(timer.remainingSeconds)}</div>
-            <div className="m-timer-sub">{timer.exerciseName}</div>
+      <div className={`m-floating-timer ${timer.isFinished ? 'is-finished' : ''}`}>
+        <div className="m-floating-timer-row">
+          <div className="m-timer-left" onClick={() => setSheetOpen(true)}>
+            <span className="m-timer-icon">{timer.isFinished ? '🔔' : '⏱️'}</span>
+            <div>
+              <div className="m-timer-digits">
+                {timer.isFinished ? 'READY' : formatTimerMMSS(timer.remainingSeconds)}
+              </div>
+              <div className="m-timer-sub">
+                {timer.isFinished ? 'Tap to dismiss or log next set' : timer.exerciseName}
+              </div>
+            </div>
+          </div>
+
+          <div className="m-timer-actions">
+            <button
+              type="button"
+              className="m-timer-quick-btn"
+              onClick={onToggleSound}
+              aria-label="Toggle sound"
+            >
+              {soundEnabled ? '🔊' : '🔇'}
+            </button>
+            <button
+              type="button"
+              className="m-timer-quick-btn"
+              onClick={() => onAdjustTimer(-15)}
+            >
+              -15s
+            </button>
+            <button
+              type="button"
+              className="m-timer-quick-btn"
+              onClick={() => onAdjustTimer(15)}
+            >
+              +15s
+            </button>
+            <button
+              type="button"
+              className="m-timer-quick-btn m-timer-skip-btn"
+              onClick={onDismiss}
+            >
+              {timer.isFinished ? '✓' : 'Skip'}
+            </button>
           </div>
         </div>
 
-        <div className="m-timer-actions">
-          <button
-            type="button"
-            className="m-timer-quick-btn"
-            onClick={() => onAdjustTimer(-15)}
-            title="-15s"
-          >
-            -15s
-          </button>
-          <button
-            type="button"
-            className="m-timer-quick-btn"
-            onClick={() => onAdjustTimer(30)}
-            title="+30s"
-          >
-            +30s
-          </button>
-          <button
-            type="button"
-            className="m-timer-quick-btn"
-            style={{ color: 'var(--m-amber)' }}
-            onClick={onDismiss}
-          >
-            {timer.isFinished ? '✓' : 'Skip'}
-          </button>
+        <div className="m-floating-timer-progress">
+          <div
+            className="m-floating-timer-progress-fill"
+            style={{ width: `${progressPct}%` }}
+          />
         </div>
       </div>
 
       <BottomSheet
         isOpen={sheetOpen}
         onClose={() => setSheetOpen(false)}
-        title="Recovery Timer"
+        title="Hypertrophy Recovery Timer"
         id="rest-sheet"
       >
         <div style={{ textAlign: 'center', margin: '1rem 0' }}>
@@ -115,7 +138,7 @@ export const MobileRestTimerBar: React.FC<MobileRestTimerBarProps> = ({
             }}
           >
             {timer.isFinished
-              ? 'Recovery target reached! You are ready for peak neuromuscular performance.'
+              ? 'Recovery target reached! You are ready for your next hard set.'
               : timer.reason}
           </p>
         </div>

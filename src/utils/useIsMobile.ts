@@ -1,42 +1,25 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Hook to detect if the current view is mobile.
- * Returns true if window width <= 768px or coarse pointer (touch device).
+ * Hook to detect if the current view should render the dedicated Mobile UI.
+ * Triggers on mobile/tablet User-Agents OR viewports <= 768px.
  */
 export function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState<boolean>(() => {
+  const checkIsMobile = (): boolean => {
     if (typeof window === 'undefined') return false;
     const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
       navigator.userAgent
     );
-    const isSmall = window.innerWidth <= 768;
-    const isTouch =
-      window.matchMedia('(pointer: coarse)').matches ||
-      (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 0);
-    return isMobileUA || isSmall || isTouch;
-  });
+    const isSmallViewport = window.innerWidth <= 768;
+    return isMobileUA || isSmallViewport;
+  };
+
+  const [isMobile, setIsMobile] = useState<boolean>(checkIsMobile);
 
   useEffect(() => {
-    const checkMobile = () => {
-      const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent
-      );
-      const isSmall = window.innerWidth <= 768;
-      const isTouch =
-        window.matchMedia('(pointer: coarse)').matches ||
-        (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 0);
-      setIsMobile(isMobileUA || isSmall || isTouch);
-    };
-
-    window.addEventListener('resize', checkMobile);
-    const mql = window.matchMedia('(pointer: coarse)');
-    mql.addEventListener?.('change', checkMobile);
-
-    return () => {
-      window.removeEventListener('resize', checkMobile);
-      mql.removeEventListener?.('change', checkMobile);
-    };
+    const handleResize = () => setIsMobile(checkIsMobile());
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   return isMobile;

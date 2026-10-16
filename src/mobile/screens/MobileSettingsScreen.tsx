@@ -119,24 +119,6 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
 
   return (
     <div className="mobile-view-container">
-      {statusMessage && (
-        <div
-          style={{
-            background: 'rgba(16, 185, 129, 0.2)',
-            border: '1px solid var(--m-green)',
-            color: 'var(--m-green)',
-            padding: '0.75rem 1rem',
-            borderRadius: 'var(--m-radius-md)',
-            marginBottom: '1rem',
-            fontWeight: 700,
-            fontSize: '0.88rem',
-            textAlign: 'center',
-          }}
-        >
-          ✓ {statusMessage}
-        </div>
-      )}
-
       {/* Preferences Section */}
       <div className="m-grouped-section">
         <div className="m-section-title">General Preferences</div>
@@ -231,7 +213,7 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
               <span className="m-row-icon">🎒</span>
               <div>
                 <div className="m-row-label">Weighted Backpack</div>
-                <div className="m-row-sublabel">Allows progressive overload with book load</div>
+                <div className="m-row-sublabel">Allows progressive overload with bottle loading</div>
               </div>
             </div>
             <label className="m-switch">
@@ -256,8 +238,8 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
             <MobileNumberPicker
               value={bedHeightDisplay}
               unit={units === 'metric' ? 'cm' : 'in'}
-              min={10}
-              max={150}
+              min={units === 'metric' ? 20 : 8}
+              max={units === 'metric' ? 120 : 48}
               step={1}
               quickStep={5}
               onChange={setBedHeightDisplay}
@@ -292,14 +274,14 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
               <span className="m-row-icon">🔢</span>
               <div>
                 <div className="m-row-label">Target Sets Per Workout</div>
-                <div className="m-row-sublabel">Recommended: 8–18 sets per day</div>
+                <div className="m-row-sublabel">Strict volume invariance: 1–20 sets per session (default 4)</div>
               </div>
             </div>
             <MobileNumberPicker
               value={setsPerDay}
               unit="sets"
-              min={6}
-              max={30}
+              min={1}
+              max={20}
               step={1}
               quickStep={2}
               onChange={setSetsPerDay}

@@ -569,30 +569,67 @@
   color: var(--m-red);
 }
 
-/* Floating Rest Timer Bar */
+/* Fix Floating Rest Timer positioning when BottomNav is hidden (inside MobileSessionScreen) */
 .m-floating-timer {
   position: fixed;
-  bottom: calc(var(--m-nav-height) + env(safe-area-inset-bottom, 0px) + 0.6rem);
-  left: 1rem;
-  right: 1rem;
-  background: rgba(22, 32, 50, 0.96);
-  border: 1px solid rgba(6, 182, 212, 0.4);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem);
+  left: 0.85rem;
+  right: 0.85rem;
+  background: rgba(17, 24, 39, 0.97);
+  border: 1px solid rgba(6, 182, 212, 0.45);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   border-radius: var(--m-radius-md);
-  padding: 0.65rem 1rem;
+  padding: 0.65rem 0.9rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  z-index: 70;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 20px rgba(6, 182, 212, 0.2);
+  animation: mSlideUp 0.2s ease forwards;
+}
+
+.m-floating-timer.is-finished {
+  border-color: rgba(16, 185, 129, 0.65);
+  background: linear-gradient(135deg, rgba(6, 78, 59, 0.96), rgba(17, 24, 39, 0.97));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 22px rgba(16, 185, 129, 0.3);
+}
+
+.m-floating-timer-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  z-index: 55;
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.6);
-  animation: mSlideUp 0.2s ease forwards;
+  gap: 0.5rem;
+}
+
+.m-floating-timer.is-finished .m-timer-digits {
+  color: var(--m-green);
+}
+
+.m-floating-timer-progress {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--m-radius-full);
+  overflow: hidden;
+}
+
+.m-floating-timer-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--m-primary), var(--m-cyan));
+  transition: width 0.25s linear;
+}
+
+.m-floating-timer.is-finished .m-floating-timer-progress-fill {
+  background: var(--m-green);
 }
 
 .m-timer-left {
   display: flex;
   align-items: center;
   gap: 0.65rem;
+  cursor: pointer;
+  flex: 1;
 }
 
 .m-timer-digits {
@@ -627,6 +664,30 @@
 .m-timer-quick-btn:active {
   background: rgba(255, 255, 255, 0.2);
 }
+
+.m-timer-skip-btn {
+  color: var(--m-amber) !important;
+  border-color: rgba(245, 158, 11, 0.3) !important;
+}
+
+/* Prevent scroll chaining & pull-to-refresh glitches on Android WebView */
+.mobile-view-container,
+.m-sheet-body {
+  overscroll-behavior-y: contain;
+}
+
+/* Header titles alignment */
+.mobile-header-titles {
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-header-subtitle {
+  font-size: 0.7rem;
+  color: var(--m-text-muted);
+  font-weight: 600;
+}
+
 
 /* Gym-First Workout Logger Styles */
 .m-exercise-nav {
@@ -761,6 +822,11 @@
 .m-node-status-dot.workout { background: var(--m-primary); }
 .m-node-status-dot.completed { background: var(--m-green); }
 .m-node-status-dot.rest { background: rgba(255, 255, 255, 0.15); }
+.m-node-status-dot.missed {
+  background: var(--m-red);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
 
 /* Hypertrophy Muscle Cards */
 .m-muscle-card {

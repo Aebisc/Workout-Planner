@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api';
 import { Exercise, Muscle, Plan, Settings, Warning } from '../../types';
+import { BottomSheet } from '../components/BottomSheet';
 
 interface MobileDashboardScreenProps {
   plan: Plan | null;
@@ -18,6 +19,7 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
   const [loading, setLoading] = useState(true);
   const [deloadLoading, setDeloadLoading] = useState(false);
   const [deloadSuccess, setDeloadSuccess] = useState<string | null>(null);
+  const [showDeloadConfirmSheet, setShowDeloadConfirmSheet] = useState(false);
 
   useEffect(() => {
     Promise.all([api.getWarnings(), api.getExercises()])
@@ -29,7 +31,6 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
   }, [plan]);
 
   const handleTriggerDeload = async () => {
-    if (!confirm('Apply a lighter cycle (deload)? All session set counts will be halved to facilitate fatigue recovery.')) return;
     setDeloadLoading(true);
     try {
       await api.triggerDeload();
@@ -57,6 +58,8 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
 
   const muscles: Muscle[] = ['chest', 'back', 'biceps', 'triceps', 'forearms', 'abs'];
   const factor = settings.experience === 'under_6_months' ? 0.7 : 1.0;
+  const cycleLen = plan ? Math.max(1, plan.cycle.length_days) : 7;
+  const weeklyRate = 7.0 / cycleLen;
 
   const volumeBreakdown = muscles.map((m) => {
     let directSets = 0;
@@ -80,48 +83,55 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
       });
     }
 
-    const totalEquiv = directSets + indirectSets;
-    const mev = Math.round(8 * factor);
-    const mavMin = Math.round(12 * factor);
-    const mavMax = Math.round(18 * factor);
-    const mrv = Math.round(22 * factor);
+    const weeklyDirect = directSets * weeklyRate;
+    const weeklyIndirect = indirectSets * weeklyRate;
+    const weeklyTotal = weeklyDirect + weeklyIndirect;
 
-    let tier = 'MEV';
-    let badgeClass = 'm-badge-mev';
-    let fillPercent = Math.min(100, Math.round((totalEquiv / mrv) * 100));
-    let fillColor = 'var(--m-cyan)';
+    let tier = 'Optimal Growth';
+    let badgeClass = 'm-badge-mav';
+    let tierColor = 'var(--m-green)';
 
-    if (totalEquiv < mev) {
-      tier = 'Below MEV';
+    if (plan?.is_deload) {
+      tier = 'Deload (~50%)';
+      badgeClass = 'm-badge-mev';
+      tierColor = 'var(--m-cyan)';
+    } else if (weeklyTotal < 1.0 * factor) {
+      tier = 'Muscle Loss Risk';
       badgeClass = 'm-badge-danger';
-      fillColor = 'var(--m-red)';
-    } else if (totalEquiv <= mavMax) {
-      tier = 'MAV (Optimal)';
-      badgeClass = 'm-badge-mav';
-      fillColor = 'var(--m-green)';
-    } else if (totalEquiv <= mrv) {
-      tier = 'High (Near MRV)';
+      tierColor = 'var(--m-red)';
+    } else if (weeklyTotal < 5.0 * factor) {
+      tier = 'Maintenance Only';
       badgeClass = 'm-badge-mrv';
-      fillColor = 'var(--m-amber)';
+      tierColor = 'var(--m-amber)';
+    } else if (weeklyTotal < 10.0 * factor) {
+      tier = 'Small Growth';
+      badgeClass = 'm-badge-mev';
+      tierColor = 'var(--m-cyan)';
+    } else if (weeklyTotal <= 20.0 * factor) {
+      tier = 'Optimal Growth';
+      badgeClass = 'm-badge-mav';
+      tierColor = 'var(--m-green)';
     } else {
-      tier = 'Above MRV';
-      badgeClass = 'm-badge-danger';
-      fillColor = 'var(--m-red)';
+      tier = 'Diminishing Returns';
+      badgeClass = 'm-badge-mrv';
+      tierColor = '#a855f7';
     }
+
+    const maxScale = Math.max(25, weeklyTotal);
+    const directPct = Math.min(100, (weeklyDirect / maxScale) * 100);
+    const indirectPct = Math.min(100 - directPct, (weeklyIndirect / maxScale) * 100);
 
     return {
       muscle: m,
-      directSets,
-      indirectSets: Math.round(indirectSets * 10) / 10,
-      totalEquiv: Math.round(totalEquiv * 10) / 10,
-      mev,
-      mavMin,
-      mavMax,
-      mrv,
+      weeklyDirect,
+      weeklyIndirect,
+      weeklyTotal,
       tier,
       badgeClass,
-      fillPercent,
-      fillColor,
+      tierColor,
+      directPct,
+      indirectPct,
+      maxScale,
     };
   });
 
@@ -166,7 +176,7 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
               color: isDeload ? '#fff' : 'var(--m-amber)',
               border: 'none',
             }}
-            onClick={isDeload ? handleRestoreDeload : handleTriggerDeload}
+            onClick={isDeload ? handleRestoreDeload : () => setShowDeloadConfirmSheet(true)}
             disabled={deloadLoading}
           >
             {isDeload ? 'Restore Full Volume' : 'Trigger Deload'}
@@ -209,33 +219,127 @@ export const MobileDashboardScreen: React.FC<MobileDashboardScreenProps> = ({
 
       {/* Hypertrophy Muscle Cards */}
       <div className="m-grouped-section">
-        <div className="m-section-title">Weekly Volume Breakdown</div>
+        <div className="m-section-title">Weekly Volume Stimulus (7-Day Extrapolated)</div>
         {volumeBreakdown.map((vb) => (
           <div key={vb.muscle} className="m-muscle-card">
             <div className="m-muscle-header">
-              <span className="m-muscle-name">{vb.muscle}</span>
-              <span className={`m-muscle-badge ${vb.badgeClass}`}>{vb.tier}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span className="m-muscle-name" style={{ textTransform: 'capitalize' }}>{vb.muscle}</span>
+                {settings.priority_muscles.includes(vb.muscle) && (
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      padding: '0.15rem 0.45rem',
+                      borderRadius: '999px',
+                      background: 'rgba(99, 102, 241, 0.25)',
+                      color: 'var(--m-primary)',
+                      fontWeight: 800,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Priority
+                  </span>
+                )}
+              </div>
+              <span className={`m-muscle-badge ${vb.badgeClass}`} style={{ color: vb.tierColor, borderColor: vb.tierColor }}>
+                {vb.tier}
+              </span>
             </div>
 
-            <div className="m-vol-bar-track">
+            {/* Two-tone Stacked Bar with target markers */}
+            <div className="m-vol-bar-track" style={{ position: 'relative', overflow: 'hidden' }}>
               <div
-                className="m-vol-bar-fill"
                 style={{
-                  width: `${vb.fillPercent}%`,
-                  background: vb.fillColor,
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${vb.directPct}%`,
+                  background: 'var(--m-primary)',
+                  transition: 'width 0.3s ease',
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${vb.directPct}%`,
+                  top: 0,
+                  bottom: 0,
+                  width: `${vb.indirectPct}%`,
+                  background: 'var(--m-cyan)',
+                  transition: 'left 0.3s ease, width 0.3s ease',
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${(10 * factor / vb.maxScale) * 100}%`,
+                  top: 0,
+                  bottom: 0,
+                  width: '2px',
+                  background: 'rgba(255, 255, 255, 0.35)',
+                  zIndex: 2,
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${(20 * factor / vb.maxScale) * 100}%`,
+                  top: 0,
+                  bottom: 0,
+                  width: '2px',
+                  background: 'rgba(255, 255, 255, 0.35)',
+                  zIndex: 2,
                 }}
               />
             </div>
 
             <div className="m-vol-meta">
               <span>
-                <strong>{vb.totalEquiv}</strong> total sets ({vb.directSets} direct + {vb.indirectSets} ind)
+                <strong style={{ color: 'var(--m-text-main)' }}>{vb.weeklyTotal.toFixed(1)}</strong> sets/wk ({vb.weeklyDirect.toFixed(1)} dir + {vb.weeklyIndirect.toFixed(1)} ind)
               </span>
-              <span>Target: {vb.mavMin}–{vb.mavMax}s</span>
+              <span style={{ color: 'var(--m-text-subtle)' }}>
+                Target: {Math.round(10 * factor)}–{Math.round(20 * factor)}s
+              </span>
             </div>
           </div>
         ))}
       </div>
+
+      {/* Deload Confirmation Bottom Sheet */}
+      <BottomSheet
+        isOpen={showDeloadConfirmSheet}
+        onClose={() => setShowDeloadConfirmSheet(false)}
+        title="Confirm Lighter Cycle"
+        id="deload-confirm-sheet"
+      >
+        <div style={{ padding: '0.75rem 0' }}>
+          <p style={{ color: 'var(--m-text-muted)', fontSize: '0.9rem', lineHeight: 1.5, margin: 0 }}>
+            Apply a lighter recovery cycle? All session set counts will be halved for one cycle to facilitate systemic and local fatigue dissipation.
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+            <button
+              type="button"
+              className="m-btn m-btn-secondary"
+              style={{ flex: 1 }}
+              onClick={() => setShowDeloadConfirmSheet(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="m-btn m-btn-primary"
+              style={{ flex: 1, background: 'var(--m-amber)', borderColor: 'var(--m-amber)', color: '#000' }}
+              onClick={async () => {
+                setShowDeloadConfirmSheet(false);
+                await handleTriggerDeload();
+              }}
+            >
+              Confirm Deload
+            </button>
+          </div>
+        </div>
+      </BottomSheet>
     </div>
   );
 };
