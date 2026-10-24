@@ -1,7 +1,8 @@
 use crate::calibration::calibrate_initial_profile;
 use crate::models::{
-    CalibrationAnswers, CompleteSessionResponse, CompletedSession, Exercise, Plan, Profile,
-    ProgressionSuggestion, Session, SessionExerciseSummary, SetLog, Settings, Warning,
+    CalibrationAnswers, CompleteSessionResponse, CompletedSession, Exercise, FullBackupPayload,
+    LanSyncStatus, Plan, Profile, ProgressionSuggestion, Session, SessionExerciseSummary, SetLog,
+    Settings, Warning,
 };
 use crate::progression::{evaluate_progression, update_profile_from_set};
 use crate::scheduler::generate_plan as sched_generate_plan;
@@ -9,7 +10,8 @@ use crate::storage::StorageManager;
 use crate::volume::evaluate_plan_warnings;
 use crate::{load_embedded_exercises, load_embedded_warning_tiers};
 use std::collections::HashMap;
-use tauri::Manager;
+use std::sync::{Arc, Mutex, OnceLock};
+use tauri::{Emitter, Manager};
 
 fn get_storage(app: &tauri::AppHandle) -> Result<StorageManager, String> {
     let dir = app
@@ -734,5 +736,317 @@ pub fn delete_completed_session(app: tauri::AppHandle, id: String) -> Result<(),
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn export_full_backup(
+    app: tauri::AppHandle,
+    client_meta: Option<serde_json::Value>,
+) -> Result<FullBackupPayload, String> {
+    let storage = get_storage(&app)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    Ok(FullBackupPayload {
+        version: 1,
+        exported_at: now,
+        settings: storage.load_settings()?,
+        profile: storage.load_profile()?,
+        plan: storage.load_plan()?,
+        set_logs: storage.load_set_logs()?,
+        session_history: storage.load_session_history()?,
+        client_meta,
+    })
+}
+
+#[tauri::command]
+pub fn import_full_backup(
+    app: tauri::AppHandle,
+    payload: FullBackupPayload,
+) -> Result<FullBackupPayload, String> {
+    let storage = get_storage(&app)?;
+    storage.save_settings(&payload.settings)?;
+    storage.save_profile(&payload.profile)?;
+    if let Some(ref plan) = payload.plan {
+        storage.save_plan(plan)?;
+    } else {
+        let exercises = load_embedded_exercises();
+        let generated = sched_generate_plan(
+            &payload.settings,
+            &payload.profile,
+            &exercises,
+            HashMap::new(),
+            HashMap::new(),
+        );
+        storage.save_plan(&generated)?;
+    }
+    storage.save_set_logs(&payload.set_logs)?;
+    storage.save_session_history(&payload.session_history)?;
+    Ok(payload)
+}
+
+struct LanServerState {
+    running: bool,
+    ip: String,
+    port: u16,
+    pin: String,
+    client_meta: Option<serde_json::Value>,
+}
+
+static LAN_STATE: OnceLock<Arc<Mutex<LanServerState>>> = OnceLock::new();
+
+fn get_lan_state() -> Arc<Mutex<LanServerState>> {
+    LAN_STATE
+        .get_or_init(|| {
+            Arc::new(Mutex::new(LanServerState {
+                running: false,
+                ip: "127.0.0.1".to_string(),
+                port: 7878,
+                pin: "0000".to_string(),
+                client_meta: None,
+            }))
+        })
+        .clone()
+}
+
+fn detect_local_ip() -> String {
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                let ip = addr.ip().to_string();
+                if ip != "0.0.0.0" {
+                    return ip;
+                }
+            }
+        }
+    }
+    "127.0.0.1".to_string()
+}
+
+#[tauri::command]
+pub fn start_lan_sync_server(
+    app: tauri::AppHandle,
+    client_meta: Option<serde_json::Value>,
+) -> Result<LanSyncStatus, String> {
+    let state_arc = get_lan_state();
+    {
+        let mut st = state_arc.lock().unwrap();
+        if st.running {
+            st.client_meta = client_meta;
+            return Ok(LanSyncStatus {
+                running: true,
+                ip: st.ip.clone(),
+                port: st.port,
+                pin: st.pin.clone(),
+            });
+        }
+    }
+
+    let ip = detect_local_ip();
+    let port = 7878;
+    let pin = format!(
+        "{:04}",
+        (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(1234)
+            % 9000)
+            + 1000
+    );
+
+    let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))
+        .map_err(|e| format!("Failed to bind Wi-Fi sync port {}: {}", port, e))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Failed to configure listener: {}", e))?;
+
+    {
+        let mut st = state_arc.lock().unwrap();
+        st.running = true;
+        st.ip = ip.clone();
+        st.port = port;
+        st.pin = pin.clone();
+        st.client_meta = client_meta;
+    }
+
+    let app_handle = app.clone();
+    let thread_state = state_arc.clone();
+
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        loop {
+            {
+                let st = thread_state.lock().unwrap();
+                if !st.running {
+                    break;
+                }
+            }
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                    let mut buf = vec![0u8; 8192];
+                    let mut total_read = 0usize;
+                    let mut header_end = None;
+                    let mut content_len = 0usize;
+
+                    loop {
+                        if total_read >= buf.len() {
+                            buf.resize(buf.len() * 2, 0);
+                        }
+                        match stream.read(&mut buf[total_read..]) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                total_read += n;
+                                let req_str = String::from_utf8_lossy(&buf[..total_read]);
+                                if header_end.is_none() {
+                                    if let Some(pos) = req_str.find("\r\n\r\n") {
+                                        header_end = Some(pos + 4);
+                                        for line in req_str[..pos].lines() {
+                                            if line.to_ascii_lowercase().starts_with("content-length:") {
+                                                if let Some(val) = line.split(':').nth(1) {
+                                                    content_len = val.trim().parse().unwrap_or(0);
+                                                }
+                                            }
+                                        }
+                                        if total_read < pos + 4 + content_len && buf.len() < pos + 4 + content_len {
+                                            buf.resize(pos + 4 + content_len + 1024, 0);
+                                        }
+                                    }
+                                }
+                                if let Some(h_end) = header_end {
+                                    if total_read >= h_end + content_len {
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                                continue;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+
+                    let req_str = String::from_utf8_lossy(&buf[..total_read]);
+                    let first_line = req_str.lines().next().unwrap_or("");
+                    let parts: Vec<&str> = first_line.split_whitespace().collect();
+                    let method = parts.first().copied().unwrap_or("");
+                    let path = parts.get(1).copied().unwrap_or("");
+
+                    let cors_headers = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n";
+
+                    if method == "OPTIONS" {
+                        let resp = format!("HTTP/1.1 204 No Content\r\n{}\r\n", cors_headers);
+                        let _ = stream.write_all(resp.as_bytes());
+                        continue;
+                    }
+
+                    let expected_pin = { thread_state.lock().unwrap().pin.clone() };
+                    let pin_ok = path.contains(&format!("pin={}", expected_pin));
+
+                    if !pin_ok {
+                        let body = r#"{"error":"Invalid PIN"}"#;
+                        let resp = format!(
+                            "HTTP/1.1 403 Forbidden\r\n{}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                            cors_headers,
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(resp.as_bytes());
+                        continue;
+                    }
+
+                    if method == "GET" {
+                        let meta = { thread_state.lock().unwrap().client_meta.clone() };
+                        if let Ok(payload) = export_full_backup(app_handle.clone(), meta) {
+                            let body = serde_json::to_string(&payload).unwrap_or_default();
+                            let resp = format!(
+                                "HTTP/1.1 200 OK\r\n{}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                                cors_headers,
+                                body.len(),
+                                body
+                            );
+                            let _ = stream.write_all(resp.as_bytes());
+                        }
+                    } else if method == "POST" {
+                        if let Some(h_end) = header_end {
+                            let body_bytes = &buf[h_end..total_read];
+                            if let Ok(payload) = serde_json::from_slice::<FullBackupPayload>(body_bytes) {
+                                {
+                                    let mut st = thread_state.lock().unwrap();
+                                    st.client_meta = payload.client_meta.clone();
+                                }
+                                if import_full_backup(app_handle.clone(), payload).is_ok() {
+                                    let _ = app_handle.emit("mgp://lan-sync-received", ());
+                                    let ok_body = r#"{"status":"ok"}"#;
+                                    let resp = format!(
+                                        "HTTP/1.1 200 OK\r\n{}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                                        cors_headers,
+                                        ok_body.len(),
+                                        ok_body
+                                    );
+                                    let _ = stream.write_all(resp.as_bytes());
+                                    continue;
+                                }
+                            }
+                        }
+                        let err_body = r#"{"error":"Invalid payload"}"#;
+                        let resp = format!(
+                            "HTTP/1.1 400 Bad Request\r\n{}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                            cors_headers,
+                            err_body.len(),
+                            err_body
+                        );
+                        let _ = stream.write_all(resp.as_bytes());
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    Ok(LanSyncStatus {
+        running: true,
+        ip,
+        port,
+        pin,
+    })
+}
+
+#[tauri::command]
+pub fn stop_lan_sync_server() -> Result<LanSyncStatus, String> {
+    let state_arc = get_lan_state();
+    let mut st = state_arc.lock().unwrap();
+    st.running = false;
+    Ok(LanSyncStatus {
+        running: false,
+        ip: st.ip.clone(),
+        port: st.port,
+        pin: st.pin.clone(),
+    })
+}
+
+#[tauri::command]
+pub fn get_lan_sync_status() -> Result<LanSyncStatus, String> {
+    let state_arc = get_lan_state();
+    let st = state_arc.lock().unwrap();
+    Ok(LanSyncStatus {
+        running: st.running,
+        ip: st.ip.clone(),
+        port: st.port,
+        pin: st.pin.clone(),
+    })
+}
+
+#[tauri::command]
+pub fn get_lan_client_meta() -> Result<Option<serde_json::Value>, String> {
+    let state_arc = get_lan_state();
+    let st = state_arc.lock().unwrap();
+    Ok(st.client_meta.clone())
 }
 

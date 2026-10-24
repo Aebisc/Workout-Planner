@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Muscle Growth Planner",
+  "productName": "Workout Planner",
   "version": "0.1.0",
   "identifier": "com.musclegrowthplanner.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Muscle Growth Planner",
+        "title": "Workout Planner",
         "width": 1020,
         "height": 720,
         "minWidth": 800,

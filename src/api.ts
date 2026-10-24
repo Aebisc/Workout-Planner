@@ -1,9 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
   CalibrationAnswers,
+  ClientSyncMeta,
   CompleteSessionResponse,
   CompletedSession,
   Exercise,
+  FullBackupPayload,
+  LanSyncStatus,
   Plan,
   Profile,
   ProgressionSuggestion,
@@ -74,4 +77,19 @@ export const api = {
 
   deleteCompletedSession: (id: string) =>
     invoke<void>('delete_completed_session', { id }),
+
+  exportFullBackup: (clientMeta?: ClientSyncMeta | null) =>
+    invoke<FullBackupPayload>('export_full_backup', { clientMeta }),
+
+  importFullBackup: (payload: FullBackupPayload) =>
+    invoke<FullBackupPayload>('import_full_backup', { payload }),
+
+  startLanSyncServer: (clientMeta?: ClientSyncMeta | null) =>
+    invoke<LanSyncStatus>('start_lan_sync_server', { clientMeta }),
+
+  stopLanSyncServer: () => invoke<LanSyncStatus>('stop_lan_sync_server'),
+
+  getLanSyncStatus: () => invoke<LanSyncStatus>('get_lan_sync_status'),
+
+  getLanClientMeta: () => invoke<ClientSyncMeta | null>('get_lan_client_meta'),
 };

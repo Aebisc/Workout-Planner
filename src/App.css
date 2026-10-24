@@ -290,7 +290,10 @@ body {
 
 input[type="text"],
 input[type="number"],
-select {
+input[type="password"],
+textarea,
+select,
+.form-control {
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
@@ -301,14 +304,34 @@ select {
   outline: none;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  box-sizing: border-box;
 }
 
 input[type="text"]:focus,
 input[type="number"]:focus,
-select:focus {
+input[type="password"]:focus,
+textarea:focus,
+select:focus,
+.form-control:focus {
   border-color: var(--border-focus);
   background: rgba(15, 23, 42, 0.95);
   box-shadow: 0 0 0 3px var(--border-glow), inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+textarea.form-control,
+textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 85px;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.form-control {
+  width: 100%;
+  display: block;
+  box-sizing: border-box;
 }
 
 select {
@@ -3089,6 +3112,139 @@ input:checked + .slider:before {
     grid-template-columns: 52px 72px 1fr 36px;
     gap: 0.35rem;
   }
+}
+
+/* Cross-Device Sync Hub Enhancements */
+.sync-client-panel {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+}
+
+.sync-client-summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.sync-client-summary:hover {
+  color: var(--text-primary);
+}
+
+.sync-client-form {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.sync-client-inputs-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) 110px 110px;
+  gap: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .sync-client-inputs-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sync-field-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sync-field-wrap label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sync-field-wrap input {
+  height: 42px;
+  width: 100%;
+}
+
+.sync-pin-input {
+  text-align: center;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  font-size: 1.1rem !important;
+  color: var(--accent-color) !important;
+}
+
+.sync-client-actions-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.sync-client-actions-row .btn {
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1.25rem;
+  font-weight: 700;
+}
+
+/* Password input with toggle button */
+.token-input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.token-input-group input {
+  width: 100%;
+  padding-right: 5rem;
+  height: 44px;
+}
+
+.token-toggle-btn {
+  position: absolute;
+  right: 0.5rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s;
+}
+
+.token-toggle-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Sync Paste Code Box */
+.sync-paste-box {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sync-paste-box textarea {
+  width: 100%;
+  min-height: 95px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.82rem;
+  box-sizing: border-box;
 }
 
 

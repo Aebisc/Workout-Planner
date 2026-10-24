@@ -350,6 +350,27 @@ pub struct CompleteSessionResponse {
     pub deload_cycle_completed: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullBackupPayload {
+    pub version: u32,
+    pub exported_at: i64,
+    pub settings: Settings,
+    pub profile: Profile,
+    pub plan: Option<Plan>,
+    pub set_logs: Vec<SetLog>,
+    pub session_history: Vec<CompletedSession>,
+    #[serde(default)]
+    pub client_meta: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanSyncStatus {
+    pub running: bool,
+    pub ip: String,
+    pub port: u16,
+    pub pin: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

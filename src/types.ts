@@ -153,3 +153,28 @@ export interface CompletedSession {
   total_sets: number;
   exercises_summary: SessionExerciseSummary[];
 }
+
+export interface ClientSyncMeta {
+  cycleAnchorDate?: string | null;
+  cycleAnchorManual?: string | null;
+  activeSessionDrafts?: Record<string, string>;
+}
+
+export interface FullBackupPayload {
+  version: number;
+  exported_at: number;
+  settings: Settings;
+  profile: Profile;
+  plan: Plan | null;
+  set_logs: SetLog[];
+  session_history: CompletedSession[];
+  client_meta?: ClientSyncMeta | null;
+}
+
+export interface LanSyncStatus {
+  running: boolean;
+  ip: string;
+  port: number;
+  pin: string;
+}
+

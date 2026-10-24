@@ -126,11 +126,11 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   const getHeaderTitle = () => {
     if (activeStack === 'session') return `Session ${selectedSessionNumber}`;
     if (activeStack === 'onboarding') return 'Strength Calibration';
-    if (activeTab === 'workouts') return 'Muscle Growth Planner';
+    if (activeTab === 'workouts') return 'Workout Planner';
     if (activeTab === 'analytics') return 'Volume Analytics';
     if (activeTab === 'history') return 'Workout History';
     if (activeTab === 'settings') return 'Settings';
-    return 'Muscle Growth Planner';
+    return 'Workout Planner';
   };
 
   return (

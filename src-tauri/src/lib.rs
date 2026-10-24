@@ -64,6 +64,12 @@ pub fn run() {
             commands::get_session_history,
             commands::update_completed_session,
             commands::delete_completed_session,
+            commands::export_full_backup,
+            commands::import_full_backup,
+            commands::start_lan_sync_server,
+            commands::stop_lan_sync_server,
+            commands::get_lan_sync_status,
+            commands::get_lan_client_meta,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -145,5 +151,186 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_full_backup_payload_round_trip() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "mgp_test_sync_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let storage = storage::StorageManager::new(temp_dir.clone());
+
+        let settings = models::Settings {
+            units: models::Units::Imperial,
+            backpack: true,
+            bed_height_cm: 45.0,
+            priority_muscles: vec![models::Muscle::Chest, models::Muscle::Triceps],
+            maintenance_on: true,
+            experience: models::ExperienceLevel::Over2Years,
+            sets_per_day: 5,
+            days_per_week: 4.67,
+            calendar_view: true,
+            rest_timer_sound: true,
+        };
+
+        let mut max_reps = HashMap::new();
+        max_reps.insert("push_up".to_string(), 35);
+        max_reps.insert("archer_push_up".to_string(), 12);
+        let profile = models::Profile {
+            body_weight_kg: 82.5,
+            estimated_max_reps: max_reps,
+        };
+
+        let block = models::Block {
+            exercise_id: "archer_push_up".to_string(),
+            sets: 3,
+            rep_target_min: 8,
+            rep_target_max: 12,
+            seconds_target_min: None,
+            seconds_target_max: None,
+            effort_target: "2 RIR".to_string(),
+            tempo_cue: "3s eccentric".to_string(),
+            rest_cue: "2-3 min".to_string(),
+            added_weight_kg: 5.0,
+        };
+
+        let session = models::Session {
+            session_number: 1,
+            focus: vec![models::Muscle::Chest],
+            blocks: vec![block],
+        };
+
+        let cycle = models::Cycle {
+            length_days: 7,
+            sessions_count: 3,
+            effective_weekly_rate: 3.0,
+            description: "Standard".to_string(),
+            is_adjusted: false,
+            adjusted_message: None,
+        };
+
+        let plan = models::Plan {
+            cycle,
+            sessions: vec![session],
+            maintenance_deficits: HashMap::new(),
+            cumulative_effective_sets: HashMap::new(),
+            maintenance_dropped: false,
+            is_deload: true,
+            pre_deload_sessions: None,
+        };
+
+        let set_log = models::SetLog {
+            timestamp: 1700000000000,
+            session_number: 1,
+            block_index: 0,
+            exercise_id: "archer_push_up".to_string(),
+            reps_or_seconds: 10,
+            added_weight_kg: 5.0,
+            reps_from_failure: 1,
+        };
+
+        let completed = models::CompletedSession {
+            id: "sess-1-1700000000000".to_string(),
+            timestamp: 1700000000000,
+            session_number: 1,
+            focus: vec![models::Muscle::Chest],
+            total_sets: 1,
+            exercises_summary: vec![models::SessionExerciseSummary {
+                exercise_id: "archer_push_up".to_string(),
+                exercise_name: "Archer Push Up".to_string(),
+                sets_completed: 1,
+                reps_or_seconds: vec![10],
+                added_weight_kg: 5.0,
+                avg_rir: 1.0,
+            }],
+        };
+
+        let client_meta = serde_json::json!({
+            "cycleAnchorDate": "2026-10-16",
+            "cycleAnchorManual": "manual_set",
+            "activeSessionDrafts": { "mgp_active_session_1": "[{\"reps\":10}]" }
+        });
+
+        let payload = models::FullBackupPayload {
+            version: 1,
+            exported_at: 1700000000000,
+            settings: settings.clone(),
+            profile: profile.clone(),
+            plan: Some(plan.clone()),
+            set_logs: vec![set_log.clone()],
+            session_history: vec![completed.clone()],
+            client_meta: Some(client_meta.clone()),
+        };
+
+        // 1. Test serde_json serialization round-trip
+        let serialized = serde_json::to_string(&payload).expect("Serialization failed");
+        let deserialized: models::FullBackupPayload =
+            serde_json::from_str(&serialized).expect("Deserialization failed");
+        assert_eq!(deserialized.version, 1);
+        assert_eq!(deserialized.settings.units, models::Units::Imperial);
+        assert_eq!(deserialized.settings.days_per_week, 4.67);
+        assert_eq!(
+            deserialized.settings.priority_muscles,
+            vec![models::Muscle::Chest, models::Muscle::Triceps]
+        );
+        assert_eq!(deserialized.profile.body_weight_kg, 82.5);
+        assert_eq!(
+            deserialized.profile.estimated_max_reps.get("archer_push_up"),
+            Some(&12)
+        );
+        assert!(deserialized.plan.as_ref().unwrap().is_deload);
+        assert_eq!(
+            deserialized.plan.as_ref().unwrap().sessions[0].blocks[0].exercise_id,
+            "archer_push_up"
+        );
+        assert_eq!(
+            deserialized.plan.as_ref().unwrap().sessions[0].blocks[0].added_weight_kg,
+            5.0
+        );
+        assert_eq!(deserialized.set_logs.len(), 1);
+        assert_eq!(deserialized.session_history.len(), 1);
+        assert_eq!(
+            deserialized.client_meta.as_ref().unwrap()["cycleAnchorDate"],
+            "2026-10-16"
+        );
+
+        // 2. Test disk storage persistence
+        storage.save_settings(&deserialized.settings).unwrap();
+        storage.save_profile(&deserialized.profile).unwrap();
+        storage
+            .save_plan(deserialized.plan.as_ref().unwrap())
+            .unwrap();
+        storage.save_set_logs(&deserialized.set_logs).unwrap();
+        storage
+            .save_session_history(&deserialized.session_history)
+            .unwrap();
+
+        let loaded_settings = storage.load_settings().unwrap();
+        assert_eq!(loaded_settings.units, models::Units::Imperial);
+        assert_eq!(loaded_settings.sets_per_day, 5);
+
+        let loaded_profile = storage.load_profile().unwrap();
+        assert_eq!(loaded_profile.body_weight_kg, 82.5);
+
+        let loaded_plan = storage.load_plan().unwrap().unwrap();
+        assert!(loaded_plan.is_deload);
+        assert_eq!(
+            loaded_plan.sessions[0].blocks[0].exercise_id,
+            "archer_push_up"
+        );
+
+        let loaded_logs = storage.load_set_logs().unwrap();
+        assert_eq!(loaded_logs.len(), 1);
+        assert_eq!(loaded_logs[0].exercise_id, "archer_push_up");
+
+        let loaded_hist = storage.load_session_history().unwrap();
+        assert_eq!(loaded_hist.len(), 1);
+        assert_eq!(loaded_hist[0].id, "sess-1-1700000000000");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

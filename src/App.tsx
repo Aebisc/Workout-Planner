@@ -96,7 +96,7 @@ export function App() {
     return (
       <div className="app-loading">
         <div className="spinner"></div>
-        <p>Loading Muscle Growth Planner...</p>
+        <p>Loading Workout Planner...</p>
       </div>
     );
   }
@@ -119,7 +119,7 @@ export function App() {
       <header className="app-header">
         <div className="app-brand" onClick={() => navigateTo('overview')}>
           <img src="/app-icon.png" alt="Icon" className="brand-icon-img" />
-          <h1>Muscle Growth Planner</h1>
+          <h1>Workout Planner</h1>
         </div>
 
         {tab !== 'onboarding' && (
