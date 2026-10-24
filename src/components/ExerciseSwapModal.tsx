@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Exercise, Muscle } from '../types';
 import { registerModalBackHandler } from '../utils/androidBack';
+import { getActiveEquipmentList } from '../utils/equipment';
 
 interface ExerciseSwapModalProps {
   isOpen: boolean;
@@ -28,6 +29,8 @@ export const ExerciseSwapModal: React.FC<ExerciseSwapModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [availableEquipment, setAvailableEquipment] = useState<string[]>([]);
+
   useEffect(() => {
     if (isOpen) {
       return registerModalBackHandler('exercise-swap', onClose);
@@ -37,6 +40,7 @@ export const ExerciseSwapModal: React.FC<ExerciseSwapModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       api.getExercises().then(setExercises).catch(console.error);
+      api.getSettings().then((s) => setAvailableEquipment(getActiveEquipmentList(s))).catch(console.error);
     }
   }, [isOpen]);
 
@@ -48,7 +52,9 @@ export const ExerciseSwapModal: React.FC<ExerciseSwapModalProps> = ({
       ex.primary_muscle === targetMuscle ||
       (ex.contribution_weights[targetMuscle] ?? 0) >= 0.5;
     const hasEquipment =
-      backpackEnabled || !ex.equipment.includes('backpack');
+      availableEquipment.length === 0
+        ? backpackEnabled || !ex.equipment.includes('backpack')
+        : ex.equipment.every((eq) => eq === 'none' || availableEquipment.includes(eq));
     return matchesMuscle && hasEquipment;
   });
 

@@ -15,6 +15,11 @@ import {
   pushToGitHubGist,
   pullFromGitHubGist,
 } from '../../utils/sync';
+import {
+  ALL_EQUIPMENT_OPTIONS,
+  getActiveEquipmentList,
+  formatActiveEquipmentSummary,
+} from '../../utils/equipment';
 
 interface MobileSettingsScreenProps {
   initialSettings: Settings;
@@ -28,7 +33,16 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
   onNavigateToOnboarding,
 }) => {
   const [units, setUnits] = useState<Units>(initialSettings.units);
-  const [backpack, setBackpack] = useState<boolean>(initialSettings.backpack);
+  const [enabledEquipment, setEnabledEquipment] = useState<string[]>(() =>
+    getActiveEquipmentList(initialSettings)
+  );
+  const [backpack, setBackpack] = useState<boolean>(
+    initialSettings.backpack || initialSettings.enabled_equipment?.includes('backpack') || false
+  );
+  const [weightVest, setWeightVest] = useState<boolean>(
+    initialSettings.weight_vest || initialSettings.enabled_equipment?.includes('weight_vest') || false
+  );
+  const [showEquipmentSheet, setShowEquipmentSheet] = useState<boolean>(false);
   const [bedHeightDisplay, setBedHeightDisplay] = useState<number>(
     toDisplayHeight(initialSettings.bed_height_cm, initialSettings.units)
   );
@@ -115,6 +129,16 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
     }
   };
 
+  const handleToggleEquipment = (eqId: string) => {
+    setEnabledEquipment((prev) => {
+      const exists = prev.includes(eqId);
+      const updated = exists ? prev.filter((id) => id !== eqId) : [...prev, eqId];
+      if (eqId === 'backpack') setBackpack(!exists);
+      if (eqId === 'weight_vest') setWeightVest(!exists);
+      return updated;
+    });
+  };
+
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setSaving(true);
@@ -131,6 +155,8 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
       days_per_week: daysPerWeek,
       calendar_view: calendarView,
       rest_timer_sound: restTimerSound,
+      enabled_equipment: enabledEquipment,
+      weight_vest: weightVest,
     };
 
     try {
@@ -239,23 +265,21 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
       <div className="m-grouped-section">
         <div className="m-section-title">Equipment & Geometry</div>
         <div className="m-inset-list">
-          {/* Backpack Equipment Toggle */}
-          <div className="m-list-row">
+          {/* Unified Equipment Row */}
+          <div
+            className="m-list-row m-list-row-clickable"
+            onClick={() => setShowEquipmentSheet(true)}
+          >
             <div className="m-row-left">
-              <span className="m-row-icon">🎒</span>
+              <span className="m-row-icon">🏋️</span>
               <div>
-                <div className="m-row-label">Weighted Backpack</div>
-                <div className="m-row-sublabel">Allows progressive overload with bottle loading</div>
+                <div className="m-row-label">Available Equipment</div>
+                <div className="m-row-sublabel">
+                  {formatActiveEquipmentSummary(enabledEquipment)}
+                </div>
               </div>
             </div>
-            <label className="m-switch">
-              <input
-                type="checkbox"
-                checked={backpack}
-                onChange={(e) => setBackpack(e.target.checked)}
-              />
-              <span className="m-slider" />
-            </label>
+            <span className="m-row-chevron">›</span>
           </div>
 
           {/* Bed / Incline Height */}
@@ -466,6 +490,83 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
           {saving ? 'Saving...' : statusMessage ? '✓ Saved!' : '✓ Save Changes'}
         </button>
       </div>
+
+      {/* Available Equipment BottomSheet */}
+      <BottomSheet
+        isOpen={showEquipmentSheet}
+        onClose={() => setShowEquipmentSheet(false)}
+        title="Available Equipment"
+        id="equipment-options-sheet"
+      >
+        <div style={{ padding: '0 0.25rem 1rem 0.25rem' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--m-text-subtle)', margin: '0 0 1rem 0', lineHeight: 1.45 }}>
+            Toggle your available equipment on or off. Workout Planner will automatically adapt exercise selections and double-progressions to only use gear you have.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem' }}>
+            {ALL_EQUIPMENT_OPTIONS.map((item) => {
+              const isChecked = enabledEquipment.includes(item.id);
+              return (
+                <div
+                  key={item.id}
+                  className="m-list-row"
+                  style={{
+                    background: isChecked ? 'rgba(99, 102, 241, 0.08)' : 'var(--m-bg-card)',
+                    border: isChecked ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid var(--m-border)',
+                    borderRadius: 'var(--m-radius-md)',
+                    padding: '0.85rem 1rem',
+                  }}
+                  onClick={() => handleToggleEquipment(item.id)}
+                >
+                  <div className="m-row-left" style={{ flex: 1, paddingRight: '0.75rem' }}>
+                    <span className="m-row-icon" style={{ fontSize: '1.4rem' }}>{item.icon}</span>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--m-text-primary)' }}>
+                          {item.name}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            padding: '0.15rem 0.45rem',
+                            borderRadius: '999px',
+                            background: item.scope === 'pull' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(168, 85, 247, 0.2)',
+                            color: item.scope === 'pull' ? '#93c5fd' : '#d8b4fe',
+                            border: item.scope === 'pull' ? '1px solid rgba(59, 130, 246, 0.35)' : '1px solid rgba(168, 85, 247, 0.35)',
+                          }}
+                        >
+                          {item.scopeBadge}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--m-text-muted)', marginTop: '0.25rem', lineHeight: 1.35 }}>
+                        {item.description}
+                      </div>
+                    </div>
+                  </div>
+                  <label className="m-switch" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => handleToggleEquipment(item.id)}
+                    />
+                    <span className="m-slider" />
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            className="m-btn m-btn-primary"
+            style={{ width: '100%', height: '48px', fontWeight: 800 }}
+            onClick={() => setShowEquipmentSheet(false)}
+          >
+            ✓ Done
+          </button>
+        </div>
+      </BottomSheet>
 
       {/* Frequency Bottom Sheet */}
       <BottomSheet

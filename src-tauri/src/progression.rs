@@ -172,7 +172,29 @@ pub fn evaluate_progression(
                     new_tempo_cue: Some("Controlled 2-3s negative".to_string()),
                 })
             }
-        } else if settings.backpack {
+        } else if (settings.weight_vest || settings.enabled_equipment.contains(&"weight_vest".to_string()))
+            && (exercise.ladder == "pull" || exercise.ladder == "pull_biceps_branch")
+            && block.added_weight_kg < 10.0
+        {
+            let weight_label = if settings.units == Units::Imperial {
+                "22 lb (10 kg)"
+            } else {
+                "10 kg"
+            };
+            Some(ProgressionSuggestion {
+                session_number,
+                block_index,
+                exercise_id: exercise.id.clone(),
+                action: "add_weight_vest".to_string(),
+                message: format!(
+                    "You've maxed out this variation! Wear your 10kg weight vest (+{}) for pull-up progressive overload.",
+                    weight_label
+                ),
+                new_added_weight_kg: Some(10.0),
+                next_exercise_id: None,
+                new_tempo_cue: Some("Controlled 2-3s negative with 10kg vest".to_string()),
+            })
+        } else if settings.backpack || settings.enabled_equipment.contains(&"backpack".to_string()) {
             let current_weight = block.added_weight_kg;
             let next_weight = current_weight + 1.5;
             let bottle_cue = format_backpack_loading(next_weight, settings.units);
@@ -578,5 +600,129 @@ mod tests {
         assert_eq!(s.block_index, 0);
         assert_eq!(s.action, "intensify_execution");
         assert_eq!(s.next_exercise_id, Some("feet_elevated_push_up".to_string()));
+    }
+
+    #[test]
+    fn test_progression_pull_exercise_with_weight_vest() {
+        let block = Block {
+            exercise_id: "pause_pull_up".to_string(),
+            sets: 3,
+            rep_target_min: 8,
+            rep_target_max: 15,
+            seconds_target_min: None,
+            seconds_target_max: None,
+            effort_target: "0-3 reps".to_string(),
+            tempo_cue: "Controlled 2-3s negative".to_string(),
+            rest_cue: "2:30".to_string(),
+            added_weight_kg: 0.0,
+        };
+        let exercise = Exercise {
+            id: "pause_pull_up".to_string(),
+            name: "Pause Pull-up".to_string(),
+            primary_muscle: Muscle::Back,
+            contribution_weights: crate::models::MuscleWeights::default(),
+            equipment: vec!["pull_bar".to_string()],
+            ladder: "pull".to_string(),
+            rung: 4,
+            easier_id: Some("pull_up".to_string()),
+            harder_id: None,
+            bw_fraction: Some(1.05),
+            bw_anchors: None,
+            time_based: false,
+            stretched_position: true,
+            cues: "cues".to_string(),
+        };
+        let logs = vec![
+            SetLog {
+                timestamp: 1,
+                session_number: 1,
+                block_index: 0,
+                exercise_id: "pause_pull_up".to_string(),
+                reps_or_seconds: 15,
+                added_weight_kg: 0.0,
+                reps_from_failure: 1,
+            },
+            SetLog {
+                timestamp: 2,
+                session_number: 1,
+                block_index: 0,
+                exercise_id: "pause_pull_up".to_string(),
+                reps_or_seconds: 15,
+                added_weight_kg: 0.0,
+                reps_from_failure: 1,
+            },
+        ];
+        let settings = Settings {
+            weight_vest: true,
+            ..Default::default()
+        };
+
+        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings);
+        assert!(suggestion.is_some());
+        let s = suggestion.unwrap();
+        assert_eq!(s.action, "add_weight_vest");
+        assert_eq!(s.new_added_weight_kg, Some(10.0));
+    }
+
+    #[test]
+    fn test_progression_push_exercise_does_not_suggest_weight_vest() {
+        let block = Block {
+            exercise_id: "pseudo_planche_push_up".to_string(),
+            sets: 3,
+            rep_target_min: 8,
+            rep_target_max: 15,
+            seconds_target_min: None,
+            seconds_target_max: None,
+            effort_target: "0-3 reps".to_string(),
+            tempo_cue: "Controlled 2-3s negative".to_string(),
+            rest_cue: "2:00".to_string(),
+            added_weight_kg: 0.0,
+        };
+        let exercise = Exercise {
+            id: "pseudo_planche_push_up".to_string(),
+            name: "Pseudo-Planche Push-up".to_string(),
+            primary_muscle: Muscle::Chest,
+            contribution_weights: crate::models::MuscleWeights::default(),
+            equipment: vec!["parallettes".to_string()],
+            ladder: "push".to_string(),
+            rung: 6,
+            easier_id: Some("archer_push_up".to_string()),
+            harder_id: None,
+            bw_fraction: Some(0.92),
+            bw_anchors: None,
+            time_based: false,
+            stretched_position: false,
+            cues: "cues".to_string(),
+        };
+        let logs = vec![
+            SetLog {
+                timestamp: 1,
+                session_number: 1,
+                block_index: 0,
+                exercise_id: "pseudo_planche_push_up".to_string(),
+                reps_or_seconds: 15,
+                added_weight_kg: 0.0,
+                reps_from_failure: 1,
+            },
+            SetLog {
+                timestamp: 2,
+                session_number: 1,
+                block_index: 0,
+                exercise_id: "pseudo_planche_push_up".to_string(),
+                reps_or_seconds: 15,
+                added_weight_kg: 0.0,
+                reps_from_failure: 1,
+            },
+        ];
+        let settings = Settings {
+            weight_vest: true,
+            backpack: false,
+            ..Default::default()
+        };
+
+        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings);
+        assert!(suggestion.is_some());
+        let s = suggestion.unwrap();
+        assert_ne!(s.action, "add_weight_vest", "Weight vest must NEVER be suggested on push exercises");
     }
 }

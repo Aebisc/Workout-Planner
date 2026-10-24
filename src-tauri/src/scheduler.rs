@@ -597,7 +597,13 @@ fn build_sessions(
                         existing_block.sets += sets_scheduled;
                     } else {
                         let est_reps = profile.estimated_max_reps.get(&ex.id).copied().unwrap_or(0);
-                        let added_kg = if settings.backpack && est_reps > 20 {
+                        let is_pull = ex.ladder == "pull" || ex.ladder == "pull_biceps_branch";
+                        let has_weight_vest = settings.weight_vest || settings.enabled_equipment.contains(&"weight_vest".to_string());
+                        let has_backpack = settings.backpack || settings.enabled_equipment.contains(&"backpack".to_string());
+
+                        let added_kg = if is_pull && has_weight_vest && est_reps > 15 {
+                            10.0
+                        } else if has_backpack && est_reps > 20 {
                             calculate_backpack_weight(
                                 ex,
                                 est_reps,
@@ -616,7 +622,9 @@ fn build_sessions(
                             (8, 15, None, None)
                         };
 
-                        let mut tempo_cue = if !settings.backpack && est_reps > 20 {
+                        let mut tempo_cue = if added_kg == 10.0 && is_pull && has_weight_vest {
+                            "Controlled 2-3s negative with 10kg vest".to_string()
+                        } else if !has_backpack && est_reps > 20 {
                             "Slow 3-4s lowering with 1s pause in stretch".to_string()
                         } else {
                             "Controlled 2-3s negative".to_string()
@@ -742,16 +750,7 @@ pub fn generate_plan(
     let cycle = days_per_week_to_cycle(settings.days_per_week);
     let b_cycle = compute_cycle_budget(settings.sets_per_day, cycle.sessions_count);
 
-    let mut available_eq = vec![
-        "none".to_string(),
-        "bed".to_string(),
-        "dumbbell".to_string(),
-        "pull_bar".to_string(),
-        "parallettes".to_string(),
-    ];
-    if settings.backpack {
-        available_eq.push("backpack".to_string());
-    }
+    let available_eq = settings.get_available_equipment();
 
     // Step 1: Draft pass to compute indirect volume from planned priority movements
     let mut indirect_received: HashMap<Muscle, f64> = HashMap::new();

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../../api';
 import { Exercise, Muscle } from '../../types';
 import { BottomSheet } from './BottomSheet';
+import { getActiveEquipmentList } from '../../utils/equipment';
 
 interface MobileExerciseSwapSheetProps {
   isOpen: boolean;
@@ -26,14 +27,17 @@ export const MobileExerciseSwapSheet: React.FC<MobileExerciseSwapSheetProps> = (
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    api.getExercises()
-      .then((list) => {
+    Promise.all([api.getExercises(), api.getSettings().catch(() => null)])
+      .then(([list, settings]) => {
+        const availableEquipment = getActiveEquipmentList(settings);
         const eligible = list.filter((ex) => {
           const matchesMuscle =
             ex.primary_muscle === muscle ||
             (ex.contribution_weights[muscle] ?? 0) >= 0.5;
           const hasEquipment =
-            backpackEnabled !== false || !ex.equipment.includes('backpack');
+            availableEquipment.length === 0
+              ? backpackEnabled !== false || !ex.equipment.includes('backpack')
+              : ex.equipment.every((eq) => eq === 'none' || availableEquipment.includes(eq));
           return matchesMuscle && hasEquipment;
         });
         setCandidates(eligible);

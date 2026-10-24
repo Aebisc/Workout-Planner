@@ -158,6 +158,19 @@ fn default_true() -> bool {
     true
 }
 
+pub fn default_equipment() -> Vec<String> {
+    vec![
+        "pull_bar".to_string(),
+        "parallettes".to_string(),
+        "bed".to_string(),
+        "dumbbell".to_string(),
+    ]
+}
+
+fn default_false() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub units: Units,
@@ -171,6 +184,34 @@ pub struct Settings {
     pub calendar_view: bool,
     #[serde(default = "default_true")]
     pub rest_timer_sound: bool,
+    #[serde(default = "default_equipment")]
+    pub enabled_equipment: Vec<String>,
+    #[serde(default = "default_false")]
+    pub weight_vest: bool,
+}
+
+impl Settings {
+    pub fn get_available_equipment(&self) -> Vec<String> {
+        let mut eq = if self.enabled_equipment.is_empty() {
+            default_equipment()
+        } else {
+            self.enabled_equipment.clone()
+        };
+        if !eq.contains(&"none".to_string()) {
+            eq.push("none".to_string());
+        }
+        if self.backpack && !eq.contains(&"backpack".to_string()) {
+            eq.push("backpack".to_string());
+        }
+        if self.weight_vest && !eq.contains(&"weight_vest".to_string()) {
+            eq.push("weight_vest".to_string());
+        }
+        eq
+    }
+
+    pub fn has_equipment(&self, item: &str) -> bool {
+        self.get_available_equipment().contains(&item.to_string())
+    }
 }
 
 impl Default for Settings {
@@ -186,6 +227,8 @@ impl Default for Settings {
             days_per_week: 3.5,
             calendar_view: false,
             rest_timer_sound: true,
+            enabled_equipment: default_equipment(),
+            weight_vest: false,
         }
     }
 }
@@ -418,5 +461,7 @@ mod tests {
         }"#;
         let settings: Settings = serde_json::from_str(legacy_json).expect("Legacy settings JSON should deserialize");
         assert!(settings.rest_timer_sound, "rest_timer_sound should default to true for legacy settings");
+        assert_eq!(settings.enabled_equipment, default_equipment(), "enabled_equipment should default to default gear");
+        assert!(!settings.weight_vest, "weight_vest should default to false");
     }
 }

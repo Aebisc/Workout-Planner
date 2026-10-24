@@ -2,7 +2,7 @@
 
 An evidence-based, cross-platform calisthenics and hypertrophy training planner built with **Tauri v2 (Rust core)** and **React 19 (TypeScript)**. 
 
-Designed around minimal equipment (bodyweight, pull-up bar, bed/elevation, parallettes, backpack, and adjustable dumbbells), Workout Planner schedules and tracks training according to research-backed exercise physiology—driven strictly by two primary user inputs: **sets per day** and **days per week**.
+Designed around minimal equipment (bodyweight, pull-up bar, bed/elevation, parallettes, backpack, 10kg weight vest, and adjustable dumbbells), Workout Planner schedules and tracks training according to research-backed exercise physiology—driven strictly by two primary user inputs: **sets per day** and **days per week**.
 
 ---
 

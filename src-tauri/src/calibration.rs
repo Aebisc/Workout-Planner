@@ -136,12 +136,24 @@ pub fn choose_starting_variation<'a>(
         return (best_exercise, best_backpack);
     }
 
-    // If all reps are > 20 on highest rung and backpack enabled, calculate required bottle increments (1.5 kg bottles)
+    // If all reps are > 20 on highest rung and backpack/weight vest enabled, calculate required load
     let highest_ex = ladder.last().copied().unwrap_or(base_exercise);
     let highest_frac = get_exercise_bw_fraction(highest_ex, settings.bed_height_cm);
     let highest_reps = reps_at_new_load(one_rm, compute_exercise_load(highest_ex, highest_frac, body_weight_kg, 0.0));
 
-    if highest_reps > 20.0 && settings.backpack {
+    let is_pull = highest_ex.ladder == "pull" || highest_ex.ladder == "pull_biceps_branch";
+    let has_weight_vest = settings.weight_vest || settings.enabled_equipment.contains(&"weight_vest".to_string());
+    let has_backpack = settings.backpack || settings.enabled_equipment.contains(&"backpack".to_string());
+
+    if is_pull && has_weight_vest && highest_reps > 15.0 {
+        let load = compute_exercise_load(highest_ex, highest_frac, body_weight_kg, 10.0);
+        let reps = reps_at_new_load(one_rm, load);
+        if (6.0..=20.0).contains(&reps) {
+            return (highest_ex, 10.0);
+        }
+    }
+
+    if highest_reps > 20.0 && has_backpack {
         let mut added = 1.5;
         while added <= 30.0 {
             let load = compute_exercise_load(highest_ex, highest_frac, body_weight_kg, added);

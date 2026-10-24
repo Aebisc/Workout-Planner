@@ -175,6 +175,7 @@ mod tests {
             days_per_week: 4.67,
             calendar_view: true,
             rest_timer_sound: true,
+            ..Default::default()
         };
 
         let mut max_reps = HashMap::new();

@@ -79,5 +79,7 @@ coverage/
 
 # Android Builds & Scripts
 muscle-growth-planner.apk
+workout-planner.apk
+*.apk
 build-apk.ps1
 

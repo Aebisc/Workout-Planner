@@ -15,6 +15,11 @@ import {
   applyClientMeta,
   collectClientMeta,
 } from '../utils/sync';
+import {
+  ALL_EQUIPMENT_OPTIONS,
+  getActiveEquipmentList,
+  formatActiveEquipmentSummary,
+} from '../utils/equipment';
 
 interface SettingsScreenProps {
   initialSettings: Settings;
@@ -26,7 +31,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onSaved,
 }) => {
   const [units, setUnits] = useState<Units>(initialSettings.units);
-  const [backpack, setBackpack] = useState<boolean>(initialSettings.backpack);
+  const [enabledEquipment, setEnabledEquipment] = useState<string[]>(() =>
+    getActiveEquipmentList(initialSettings)
+  );
+  const [backpack, setBackpack] = useState<boolean>(
+    initialSettings.backpack || initialSettings.enabled_equipment?.includes('backpack') || false
+  );
+  const [weightVest, setWeightVest] = useState<boolean>(
+    initialSettings.weight_vest || initialSettings.enabled_equipment?.includes('weight_vest') || false
+  );
+  const [showEquipmentModal, setShowEquipmentModal] = useState<boolean>(false);
   const [bedHeightDisplay, setBedHeightDisplay] = useState<number>(
     toDisplayHeight(initialSettings.bed_height_cm, initialSettings.units)
   );
@@ -306,6 +320,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
   };
 
+  const handleToggleEquipment = (eqId: string) => {
+    setEnabledEquipment((prev) => {
+      const exists = prev.includes(eqId);
+      const updated = exists ? prev.filter((id) => id !== eqId) : [...prev, eqId];
+      if (eqId === 'backpack') setBackpack(!exists);
+      if (eqId === 'weight_vest') setWeightVest(!exists);
+      return updated;
+    });
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -322,6 +346,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       days_per_week: daysPerWeek,
       calendar_view: calendarView,
       rest_timer_sound: restTimerSound,
+      enabled_equipment: enabledEquipment,
+      weight_vest: weightVest,
     };
 
     try {
@@ -366,22 +392,40 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </div>
         </div>
 
-        <div className="form-group">
-          <label>Backpack Equipment Available</label>
-          <div className="toggle-container">
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={backpack}
-                onChange={(e) => setBackpack(e.target.checked)}
-              />
-              <span className="slider"></span>
-            </label>
-            <span className="toggle-label">
-              {backpack
-                ? 'Enabled (app will prescribe water bottles when reps exceed 20)'
-                : 'Disabled (bodyweight and 12.5 kg dumbbell only)'}
-            </span>
+        {/* Unified Equipment Option */}
+        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+          <label>Equipment Available</label>
+          <div
+            className="equipment-setting-card"
+            onClick={() => setShowEquipmentModal(true)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setShowEquipmentModal(true);
+              }
+            }}
+          >
+            <div className="equipment-card-left">
+              <span className="equipment-card-icon">🏋️</span>
+              <div>
+                <div className="equipment-card-title">Available Equipment Configuration</div>
+                <div className="equipment-card-subtitle">
+                  {formatActiveEquipmentSummary(enabledEquipment)} • Click to customize gear
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm equipment-manage-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowEquipmentModal(true);
+              }}
+            >
+              Manage Equipment ⚙️
+            </button>
           </div>
         </div>
 
@@ -871,6 +915,76 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </div>
         )}
       </div>
+
+      {/* Equipment Options Modal */}
+      {showEquipmentModal && (
+        <div className="modal-overlay" onClick={() => setShowEquipmentModal(false)}>
+          <div
+            className="modal-content equipment-modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '620px', width: '92%' }}
+          >
+            <div className="modal-header">
+              <h3>🏋️ Available Equipment</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowEquipmentModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <p className="modal-subtitle">
+              Turn your available gear on or off. The planner will automatically adapt exercises, progressions, and leverage based on what you have.
+            </p>
+
+            <div className="equipment-modal-list">
+              {ALL_EQUIPMENT_OPTIONS.map((item) => {
+                const isChecked = enabledEquipment.includes(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className={`equipment-item-row ${isChecked ? 'active' : ''}`}
+                    onClick={() => handleToggleEquipment(item.id)}
+                  >
+                    <div className="equipment-item-left">
+                      <span className="equipment-item-icon">{item.icon}</span>
+                      <div>
+                        <div className="equipment-item-header">
+                          <span className="equipment-item-name">{item.name}</span>
+                          <span className={`equipment-scope-pill scope-${item.scope}`}>
+                            {item.scopeBadge}
+                          </span>
+                        </div>
+                        <div className="equipment-item-desc">{item.description}</div>
+                      </div>
+                    </div>
+                    <label className="toggle-switch" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleEquipment(item.id)}
+                      />
+                      <span className="slider"></span>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setShowEquipmentModal(false)}
+                style={{ padding: '0.6rem 1.5rem', fontWeight: 700 }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

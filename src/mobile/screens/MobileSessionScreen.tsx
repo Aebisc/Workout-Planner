@@ -513,7 +513,12 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
               fontWeight: 700,
             }}
           >
-            🎒 Added Load: {formatBackpackLoad(activeBlock.added_weight_kg, settings.units)}
+            {activeBlock.added_weight_kg === 10.0 && activeEx?.primary_muscle === 'back' ? '🦺' : '🎒'} Added Load:{' '}
+            {formatBackpackLoad(
+              activeBlock.added_weight_kg,
+              settings.units,
+              activeEx?.primary_muscle === 'back'
+            )}
           </div>
         )}
 
@@ -897,6 +902,30 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
                           }
                         >
                           ⬆ Advance to {sug.next_exercise_id.replace(/_/g, ' ')}
+                        </button>
+                      )
+                    )}
+
+                    {sug.action === 'add_weight_vest' && sug.new_added_weight_kg !== null && (
+                      appliedSuggestions[backpackKey] ? (
+                        <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Equipped 10kg Vest</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="m-btn m-btn-primary"
+                          style={{ height: '36px', fontSize: '0.78rem', padding: '0 0.75rem' }}
+                          onClick={() =>
+                            handleApplyProgression(
+                              sug,
+                              {
+                                newAddedWeightKg: sug.new_added_weight_kg,
+                                newTempoCue: sug.new_tempo_cue,
+                              },
+                              backpackKey
+                            )
+                          }
+                        >
+                          🦺 Equip 10kg Weight Vest (+10 kg)
                         </button>
                       )
                     )}

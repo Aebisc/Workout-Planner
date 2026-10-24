@@ -48,6 +48,8 @@ export interface Settings {
   days_per_week: number;
   calendar_view: boolean;
   rest_timer_sound?: boolean;
+  enabled_equipment?: string[];
+  weight_vest?: boolean;
 }
 
 export interface CalibrationAnswers {

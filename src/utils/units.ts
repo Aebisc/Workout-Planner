@@ -10,8 +10,20 @@ export function formatWeight(kg: number, units: Units): string {
     : `+${kg.toFixed(1)} kg`;
 }
 
-export function formatBackpackLoad(kg: number, units: Units): string {
+export function formatBackpackLoad(kg: number, units: Units, isPull = false): string {
   if (kg <= 0) return 'Bodyweight only';
+
+  // 10kg Weight Vest identification
+  if (kg === 10.0 && isPull) {
+    return `${formatWeight(kg, units)} (10kg Weight Vest)`;
+  }
+  if (kg > 10.0 && isPull) {
+    const extra = kg - 10.0;
+    const extraBottles = Math.round(extra / 1.5);
+    const extraDesc = extraBottles > 0 ? ` + ${extraBottles} × 1.5 L bottle(s)` : ` + ${extra.toFixed(1)} kg`;
+    return `${formatWeight(kg, units)} (10kg Vest${extraDesc})`;
+  }
+
   const jugs5L = Math.floor(kg / 5.0);
   const rem = kg - jugs5L * 5.0;
   const bottles1_5L = Math.round(rem / 1.5);

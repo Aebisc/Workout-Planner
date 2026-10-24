@@ -564,7 +564,11 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                   <div className="instruction-item highlight-weight">
                     <span className="instr-label">Added Load:</span>
                     <span className="instr-val">
-                      {formatBackpackLoad(block.added_weight_kg, settings.units)}
+                      {formatBackpackLoad(
+                        block.added_weight_kg,
+                        settings.units,
+                        exercises[block.exercise_id]?.primary_muscle === 'back'
+                      )}
                     </span>
                   </div>
                 )}
@@ -861,6 +865,28 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                                 }
                               >
                                 ⬆ Advance to {sugg.next_exercise_id.replace(/_/g, ' ')}
+                              </button>
+                            )
+                          )}
+
+                          {sugg.action === 'add_weight_vest' && sugg.new_added_weight_kg !== null && (
+                            appliedSuggestions[backpackKey] ? (
+                              <span className="badge badge-success">✓ Equipped 10kg Vest</span>
+                            ) : (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() =>
+                                  handleApplyProgression(
+                                    sugg,
+                                    {
+                                      newAddedWeightKg: sugg.new_added_weight_kg,
+                                      newTempoCue: sugg.new_tempo_cue,
+                                    },
+                                    backpackKey
+                                  )
+                                }
+                              >
+                                🦺 Equip 10kg Weight Vest (+10 kg)
                               </button>
                             )
                           )}

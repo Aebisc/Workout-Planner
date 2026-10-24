@@ -178,16 +178,7 @@ pub fn swap_exercise(
 
     // 2. Equipment validation (Plan §7: must work with current equipment)
     let settings = storage.load_settings()?;
-    let mut available_eq = vec![
-        "none".to_string(),
-        "bed".to_string(),
-        "dumbbell".to_string(),
-        "pull_bar".to_string(),
-        "parallettes".to_string(),
-    ];
-    if settings.backpack {
-        available_eq.push("backpack".to_string());
-    }
+    let available_eq = settings.get_available_equipment();
 
     let has_required_equipment = new_ex
         .equipment
