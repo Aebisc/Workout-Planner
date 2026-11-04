@@ -36,6 +36,7 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
   const [regenerating, setRegenerating] = useState(false);
   const [customCalibDate, setCustomCalibDate] = useState<string>('');
   const [draftRefreshTick, setDraftRefreshTick] = useState(0);
+  const [shiftNotice, setShiftNotice] = useState<string | null>(null);
 
   const ribbonStripRef = useRef<HTMLDivElement>(null);
   const todayNodeRef = useRef<HTMLDivElement>(null);
@@ -125,7 +126,8 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
   });
 
   const consistencyPct =
-    elapsedTrainingDays > 0 ? Math.round((completedDaysCount / elapsedTrainingDays) * 100) : 100;
+    elapsedTrainingDays > 0 ? Math.round((completedDaysCount / elapsedTrainingDays) * 100) : null;
+  const consistencyLabel = consistencyPct !== null ? `${consistencyPct}%` : 'New';
 
   // Selected day details
   const selectedDay = ribbonDays.find((r) => r.offset === selectedDayOffset) || ribbonDays[10];
@@ -134,9 +136,13 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
     setRegenerating(true);
     try {
       await api.generatePlan();
-      const derived = deriveCycleAnchorFromHistory(history, cyclePattern);
-      if (derived) {
-        localStorage.setItem('mgp_cycle_anchor_date', derived);
+      // Mirror desktop behavior: a manually calibrated anchor is never
+      // overwritten by the auto-derived one.
+      if (localStorage.getItem('mgp_cycle_anchor_manual') !== 'true') {
+        const derived = deriveCycleAnchorFromHistory(history, cyclePattern);
+        if (derived) {
+          localStorage.setItem('mgp_cycle_anchor_date', derived);
+        }
       }
       onRefreshPlan();
     } catch (err) {
@@ -162,7 +168,9 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
   const getSessionDraftCount = (sessionNum: number): number => {
     void draftRefreshTick;
     try {
-      const raw = sessionStorage.getItem(`mgp_active_session_${sessionNum}`);
+      const raw =
+        localStorage.getItem(`mgp_active_draft_session_${sessionNum}`) ||
+        sessionStorage.getItem(`mgp_active_session_${sessionNum}`);
       if (!raw) return 0;
       const parsed = JSON.parse(raw);
       return Object.values(parsed).reduce(
@@ -174,8 +182,40 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
     }
   };
 
+  const handleShiftScheduleOneDay = () => {
+    const [y, m, d] = effectiveAnchorKey.split('-').map(Number);
+    const date = new Date(y, (m || 1) - 1, d || 1);
+    date.setDate(date.getDate() + 1);
+    const nextAnchor = toLocalDateKey(date);
+    localStorage.setItem('mgp_cycle_anchor_date', nextAnchor);
+    localStorage.setItem('mgp_cycle_anchor_manual', 'true');
+    setDraftRefreshTick((t) => t + 1);
+    setShiftNotice('Schedule shifted forward by 1 day! Today is marked as a rest day. 🌴');
+    setTimeout(() => setShiftNotice(null), 4000);
+  };
+
   return (
     <div className="mobile-view-container">
+      {/* Shift Notification Banner */}
+      {shiftNotice && (
+        <div
+          className="m-card"
+          style={{
+            background: 'rgba(16, 185, 129, 0.2)',
+            border: '1px solid rgba(16, 185, 129, 0.4)',
+            color: 'var(--m-green)',
+            padding: '0.65rem 1rem',
+            marginBottom: '0.85rem',
+            fontSize: '0.85rem',
+            fontWeight: 700,
+            textAlign: 'center',
+            borderRadius: 'var(--m-radius-sm)',
+          }}
+        >
+          {shiftNotice}
+        </div>
+      )}
+
       {/* Deload Active Banner & Restore Action */}
       {plan.is_deload && (
         <div
@@ -249,6 +289,33 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
         </div>
       )}
 
+      {/* Unschedulable Volume Warning Banner (Alert Only) */}
+      {plan.scheduling_alerts && plan.scheduling_alerts.length > 0 && (
+        <div
+          style={{
+            padding: '0.75rem 1rem',
+            borderRadius: 'var(--m-radius-md)',
+            background: 'rgba(239, 68, 68, 0.15)',
+            border: '1px solid rgba(239, 68, 68, 0.4)',
+            color: '#fca5a5',
+            marginBottom: '1rem',
+          }}
+        >
+          {plan.scheduling_alerts.map((alertMsg, idx) => (
+            <div
+              key={idx}
+              style={{
+                fontSize: '0.8rem',
+                lineHeight: 1.4,
+                marginBottom: idx < plan.scheduling_alerts!.length - 1 ? '0.4rem' : 0,
+              }}
+            >
+              ⚠️ <strong>Equipment Alert:</strong> {alertMsg}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Macrocycle Progress Pill Banner */}
       <div
         className="m-card"
@@ -299,12 +366,12 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
                 fontSize: '0.72rem',
                 padding: '0.15rem 0.5rem',
                 borderRadius: '999px',
-                background: consistencyPct >= 80 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
-                color: consistencyPct >= 80 ? 'var(--m-green)' : 'var(--m-amber)',
+                background: consistencyPct !== null && consistencyPct >= 80 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                color: consistencyPct !== null && consistencyPct >= 80 ? 'var(--m-green)' : 'var(--m-amber)',
                 fontWeight: 700,
               }}
             >
-              {consistencyPct}% Consistency
+              {consistencyLabel} Consistency
             </span>
             <button
               type="button"
@@ -395,7 +462,7 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
                         color: 'var(--m-green)',
                       }}
                     >
-                      {ex.exercise_name} ({ex.sets_completed}s • avg RIR {ex.avg_rir.toFixed(1)})
+                      {ex.exercise_name} ({ex.sets_completed} sets • avg RIR {ex.avg_rir.toFixed(1)})
                     </span>
                   ))}
                 </div>
@@ -528,6 +595,8 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
                         style={{ height: '38px', fontSize: '0.8rem', color: 'var(--m-text-muted)' }}
                         onClick={() => {
                           try {
+                            localStorage.removeItem(`mgp_active_draft_session_${sessNumber}`);
+                            localStorage.removeItem(`mgp_active_session_id_${sessNumber}`);
                             sessionStorage.removeItem(`mgp_active_session_${sessNumber}`);
                           } catch {}
                           setDraftRefreshTick((t) => t + 1);
@@ -538,13 +607,24 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
                       </button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      className="m-btn m-btn-primary"
-                      onClick={() => onSelectSession(sessNumber)}
-                    >
-                      ▶ Start Session {sessNumber}
-                    </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                      <button
+                        type="button"
+                        className="m-btn m-btn-primary"
+                        onClick={() => onSelectSession(sessNumber)}
+                      >
+                        ▶ Start Session {sessNumber}
+                      </button>
+                      <button
+                        type="button"
+                        className="m-btn m-btn-secondary"
+                        style={{ height: '38px', fontSize: '0.8rem', color: 'var(--m-text-muted)' }}
+                        onClick={handleShiftScheduleOneDay}
+                        title="Shift training schedule forward by 1 day"
+                      >
+                        🌙 Rest Today & Shift Schedule +1 Day
+                      </button>
+                    </div>
                   );
                 })()}
               </div>
@@ -557,9 +637,17 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
             <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0.5rem 0 0.25rem' }}>
               Rest & Recovery Day
             </h3>
-            <p style={{ fontSize: '0.85rem', color: 'var(--m-text-muted)', margin: 0 }}>
+            <p style={{ fontSize: '0.85rem', color: 'var(--m-text-muted)', margin: '0 0 1rem' }}>
               No workout scheduled. Muscle protein synthesis and central fatigue recovery in progress.
             </p>
+            <button
+              type="button"
+              className="m-btn m-btn-secondary"
+              style={{ height: '36px', fontSize: '0.78rem', color: 'var(--m-text-muted)', margin: '0 auto', maxWidth: '240px' }}
+              onClick={handleShiftScheduleOneDay}
+            >
+              🌙 Need Extra Rest? Shift Schedule +1d
+            </button>
           </div>
         )}
       </div>
@@ -591,7 +679,7 @@ export const MobilePlanScreen: React.FC<MobilePlanScreenProps> = ({
                 <div className="m-row-right">
                   {draftSets > 0 ? (
                     <span style={{ color: 'var(--m-green)', fontSize: '0.78rem', fontWeight: 800 }}>
-                      Resume ({draftSets}s) ›
+                      Resume ({draftSets} sets) ›
                     </span>
                   ) : (
                     <span className="m-row-value">Start ›</span>

@@ -270,6 +270,7 @@ fn test_edge_case_stall_detection() {
         reps_or_seconds: 12,
         added_weight_kg: 0.0,
         reps_from_failure: 1,
+        session_id: None,
     }];
     let log_session_2 = vec![SetLog {
         timestamp: 2,
@@ -279,6 +280,7 @@ fn test_edge_case_stall_detection() {
         reps_or_seconds: 12,
         added_weight_kg: 0.0,
         reps_from_failure: 2,
+        session_id: None,
     }];
     let log_session_3 = vec![SetLog {
         timestamp: 3,
@@ -288,6 +290,7 @@ fn test_edge_case_stall_detection() {
         reps_or_seconds: 11,
         added_weight_kg: 0.0,
         reps_from_failure: 1,
+        session_id: None,
     }];
 
     let history = vec![log_session_1, log_session_2, log_session_3];
@@ -464,6 +467,7 @@ fn test_stall_detection_from_flat_set_logs_and_warnings() {
             reps_or_seconds: 12,
             added_weight_kg: 0.0,
             reps_from_failure: 1,
+            session_id: None,
         },
         SetLog {
             timestamp: now - day_ms,
@@ -473,6 +477,7 @@ fn test_stall_detection_from_flat_set_logs_and_warnings() {
             reps_or_seconds: 12,
             added_weight_kg: 0.0,
             reps_from_failure: 1,
+            session_id: None,
         },
         SetLog {
             timestamp: now,
@@ -482,6 +487,7 @@ fn test_stall_detection_from_flat_set_logs_and_warnings() {
             reps_or_seconds: 12,
             added_weight_kg: 0.0,
             reps_from_failure: 1,
+            session_id: None,
         },
     ];
 
@@ -546,6 +552,7 @@ fn test_history_fallback_clustering_multi_week() {
             reps_or_seconds: 15,
             added_weight_kg: 0.0,
             reps_from_failure: 2,
+            session_id: None,
         },
         SetLog {
             timestamp: ts_week_1 + 180_000,
@@ -555,6 +562,7 @@ fn test_history_fallback_clustering_multi_week() {
             reps_or_seconds: 14,
             added_weight_kg: 0.0,
             reps_from_failure: 1,
+            session_id: None,
         },
         SetLog {
             timestamp: ts_week_2,
@@ -564,6 +572,7 @@ fn test_history_fallback_clustering_multi_week() {
             reps_or_seconds: 16,
             added_weight_kg: 0.0,
             reps_from_failure: 2,
+            session_id: None,
         },
     ];
 
@@ -607,6 +616,7 @@ fn test_update_completed_session_purges_old_timestamp_sets() {
             reps_or_seconds: 12,
             added_weight_kg: 0.0,
             reps_from_failure: 2,
+            session_id: None,
         },
     ];
 
@@ -639,19 +649,19 @@ fn test_average_reps_increase_across_sets_counts_as_progress() {
     // Session 2: 10, 9, 8 -> avg 9.00
     // Session 3: 10, 9, 9 -> avg 9.33
     let s1 = vec![
-        SetLog { timestamp: 100, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 101, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 102, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 100, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 101, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 102, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
     let s2 = vec![
-        SetLog { timestamp: 200, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 201, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 202, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 200, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 201, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 202, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
     let s3 = vec![
-        SetLog { timestamp: 300, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 301, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 302, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 300, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 301, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 302, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
 
     let history = vec![s1, s2, s3];
@@ -672,14 +682,14 @@ fn test_stall_detected_independently_per_exercise() {
     // Bicep curls stalled: 12 -> 12 -> 12 reps
     let logs = vec![
         // Day 1
-        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: base + 1000, session_number: 1, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 8, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: base + 1000, session_number: 1, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
         // Day 2
-        SetLog { timestamp: base + day, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: base + day + 1000, session_number: 2, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + day, session_number: 2, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 9, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: base + day + 1000, session_number: 2, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
         // Day 3
-        SetLog { timestamp: base + 2 * day, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: base + 2 * day + 1000, session_number: 3, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + 2 * day, session_number: 3, block_index: 0, exercise_id: "pull_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: base + 2 * day + 1000, session_number: 3, block_index: 1, exercise_id: "db_curl".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
 
     assert!(!detect_stall_from_all_logs("pull_up", &logs), "Pull-up is progressing, must not stall");
@@ -697,9 +707,9 @@ fn test_load_increase_prevents_false_stall() {
     // Day 2: Added 2.5kg backpack -> reps drop to 8 (expected due to heavier load)
     // Day 3: 2.5kg backpack -> 9 reps
     let logs = vec![
-        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: base + day, session_number: 2, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 8, added_weight_kg: 2.5, reps_from_failure: 1 },
-        SetLog { timestamp: base + 2 * day, session_number: 3, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 9, added_weight_kg: 2.5, reps_from_failure: 1 },
+        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: base + day, session_number: 2, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 8, added_weight_kg: 2.5, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: base + 2 * day, session_number: 3, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 9, added_weight_kg: 2.5, reps_from_failure: 1, session_id: None },
     ];
 
     assert!(
@@ -729,19 +739,19 @@ fn test_time_based_exercise_progression_uses_seconds_target_max() {
 
     // Trainee logs 25s holds at 1 RIR (well above 15, but below 60s target)
     let logs_25s = vec![
-        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 25, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 2, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 25, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 25, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 2, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 25, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
-    let sugg_submax = evaluate_progression(1, 0, &block, dead_hang, &logs_25s, &settings).unwrap();
+    let sugg_submax = evaluate_progression(1, 0, &block, dead_hang, &logs_25s, &settings, &exercises).unwrap();
     assert_eq!(sugg_submax.action, "add_reps");
     assert!(sugg_submax.message.contains("60 seconds"), "Message should prescribe working towards 60 seconds: {}", sugg_submax.message);
 
     // Trainee logs 60s holds at 1 RIR (hits top target window)
     let logs_60s = vec![
-        SetLog { timestamp: 3, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 60, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 4, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 60, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 3, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 60, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 4, session_number: 1, block_index: 0, exercise_id: "dead_hang".into(), reps_or_seconds: 60, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
-    let sugg_top = evaluate_progression(1, 0, &block, dead_hang, &logs_60s, &settings).unwrap();
+    let sugg_top = evaluate_progression(1, 0, &block, dead_hang, &logs_60s, &settings, &exercises).unwrap();
     assert_eq!(sugg_top.action, "intensify_execution");
     assert!(sugg_top.message.contains("Focus on full-body tension"));
 }
@@ -771,9 +781,9 @@ fn test_top_rep_mastery_is_never_overwritten_by_stall() {
 
     // 3 consecutive exposures hitting 15, 15, 15 reps (hitting rep_target_max = 15)
     let logs = vec![
-        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: base + day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: base + 2 * day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: base + day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: base + 2 * day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
 
     // 1. evaluate_stall_warnings must not flag target_ex as stalled because top target was hit
@@ -786,9 +796,9 @@ fn test_top_rep_mastery_is_never_overwritten_by_stall() {
     // 2. evaluate_progression on latest session sets returns intensify_execution or advance_variation
     let block = &plan.sessions[0].blocks[0];
     let session_sets = vec![
-        SetLog { timestamp: base + 2 * day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: base + 2 * day, session_number: 1, block_index: 0, exercise_id: target_ex_id.clone(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
-    let sugg = evaluate_progression(1, 0, block, target_ex, &session_sets, &settings).unwrap();
+    let sugg = evaluate_progression(1, 0, block, target_ex, &session_sets, &settings, &exercises).unwrap();
     assert_ne!(sugg.action, "stall_detected");
     assert!(sugg.action == "intensify_execution" || sugg.action == "advance_variation");
 }
@@ -837,6 +847,37 @@ fn test_swap_exercise_during_deload_preserves_swap_on_restore() {
 }
 
 #[test]
+fn test_swap_exercise_to_weighted_vest_updates_block_load_and_cues() {
+    let exercises = load_embedded_exercises();
+    let settings = Settings {
+        sets_per_day: 4,
+        days_per_week: 3.0,
+        priority_muscles: vec![Muscle::Back],
+        weight_vest: true,
+        ..Default::default()
+    };
+    let profile = Profile::default();
+    let mut plan = generate_plan(&settings, &profile, &exercises, HashMap::new(), HashMap::new());
+
+    // Find pull block
+    let pull_idx = plan.sessions[0]
+        .blocks
+        .iter()
+        .position(|b| b.exercise_id == "pull_up" || b.exercise_id == "pause_pull_up")
+        .unwrap();
+    let block = &mut plan.sessions[0].blocks[pull_idx];
+
+    // Swap to 10kg vest variant of pull_up
+    block.exercise_id = "pull_up".to_string();
+    block.added_weight_kg = 10.0;
+    block.tempo_cue = "Controlled 2-3s negative with 10kg vest".to_string();
+
+    assert_eq!(block.exercise_id, "pull_up");
+    assert_eq!(block.added_weight_kg, 10.0);
+    assert!(block.tempo_cue.contains("10kg vest"));
+}
+
+#[test]
 fn test_rebuild_profile_maxes_reverts_typo_or_deletion() {
     use muscle_growth_planner_lib::progression::rebuild_profile_maxes_from_logs;
 
@@ -844,10 +885,10 @@ fn test_rebuild_profile_maxes_reverts_typo_or_deletion() {
     profile.estimated_max_reps.insert("push_up".to_string(), 102); // Accidental typo (100 reps + 2 RIR)
 
     let typo_logs = vec![
-        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 100, added_weight_kg: 0.0, reps_from_failure: 2 },
+        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 100, added_weight_kg: 0.0, reps_from_failure: 2, session_id: None },
     ];
     let remaining_valid_logs = vec![
-        SetLog { timestamp: 2, session_number: 2, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 2 },
+        SetLog { timestamp: 2, session_number: 2, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 2, session_id: None },
     ];
 
     rebuild_profile_maxes_from_logs(&mut profile, &typo_logs, &remaining_valid_logs);
@@ -875,24 +916,24 @@ fn test_fatigue_aware_double_progression_triggers_on_realistic_set_dropoff() {
 
     // Realistic fatigue drop-off: 16, 15, 13 at 1 RIR (Set 1 >= 15, all sets >= 8, avg 14.67 >= 13.5)
     let logs_mastered = vec![
-        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 16, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 2, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 3, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 13, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 1, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 16, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 2, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 15, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 3, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 13, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
 
-    let sugg = evaluate_progression(1, 0, &block, push_up, &logs_mastered, &settings);
+    let sugg = evaluate_progression(1, 0, &block, push_up, &logs_mastered, &settings, &exercises);
     assert!(sugg.is_some());
     let s = sugg.unwrap();
     assert!(s.action == "intensify_execution" || s.action == "advance_variation");
 
     // Sub-target logs: 12, 11, 10 at 1 RIR (should keep working towards top reps)
     let logs_in_progress = vec![
-        SetLog { timestamp: 4, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 5, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 11, added_weight_kg: 0.0, reps_from_failure: 1 },
-        SetLog { timestamp: 6, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1 },
+        SetLog { timestamp: 4, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 12, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 5, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 11, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
+        SetLog { timestamp: 6, session_number: 1, block_index: 0, exercise_id: "push_up".into(), reps_or_seconds: 10, added_weight_kg: 0.0, reps_from_failure: 1, session_id: None },
     ];
 
-    let sugg_sub = evaluate_progression(1, 0, &block, push_up, &logs_in_progress, &settings);
+    let sugg_sub = evaluate_progression(1, 0, &block, push_up, &logs_in_progress, &settings, &exercises);
     assert!(sugg_sub.is_some());
     assert_eq!(sugg_sub.unwrap().action, "add_reps");
 }
@@ -930,6 +971,33 @@ fn test_no_duplicate_exercise_blocks_in_single_session() {
         let total_sets: u32 = session.blocks.iter().map(|b| b.sets).sum();
         assert_eq!(total_sets, 5, "Total sets in session {} must equal 5", session.session_number);
     }
+}
+
+#[test]
+fn test_missing_equipment_generates_scheduling_alerts() {
+    let exercises = load_embedded_exercises();
+    let settings = Settings {
+        sets_per_day: 4,
+        days_per_week: 3.5,
+        priority_muscles: vec![Muscle::Back], // Priority is Back, but no pull equipment enabled
+        enabled_equipment: vec!["bed".to_string()], // No pull_bar, no dumbbell
+        maintenance_on: false,
+        ..Default::default()
+    };
+    let profile = Profile::default();
+
+    let plan = generate_plan(
+        &settings,
+        &profile,
+        &exercises,
+        HashMap::new(),
+        HashMap::new(),
+    );
+
+    assert!(!plan.scheduling_alerts.is_empty(), "Should generate scheduling alert when equipment is missing");
+    let alert = &plan.scheduling_alerts[0];
+    assert!(alert.contains("BACK"), "Alert should mention BACK muscle");
+    assert!(alert.contains("pull-up bar or dumbbell"), "Alert should specify missing equipment");
 }
 
 

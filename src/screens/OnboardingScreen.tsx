@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { CalibrationAnswers, ExperienceLevel, Muscle, Units } from '../types';
-import { formatBackpackLoad, KG_TO_LB, CM_TO_IN } from '../utils/units';
+import { formatBackpackLoad, toDisplayWeight, KG_TO_LB } from '../utils/units';
+import {
+  ALL_EQUIPMENT_OPTIONS,
+  getActiveEquipmentList,
+  formatActiveEquipmentSummary,
+} from '../utils/equipment';
 
 interface OnboardingScreenProps {
   onComplete: () => void;
@@ -9,15 +14,22 @@ interface OnboardingScreenProps {
 
 export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }) => {
   const [units, setUnits] = useState<Units>('metric');
-  const [weight, setWeight] = useState<number>(75);
-  const [bedHeight, setBedHeight] = useState<number>(50);
+  // Metric source of truth; display values are re-derived only when the unit
+  // system changes, so toggling units can never drift the entered values.
+  const [weightKg, setWeightKg] = useState<number>(75);
+  const [weightDisplay, setWeightDisplay] = useState<number>(75);
   const [pushUpsAvg, setPushUpsAvg] = useState<number>(12);
   const [pullUpsAvg, setPullUpsAvg] = useState<number>(4);
-  const [closeToFailure, setCloseToFailure] = useState<boolean>(true);
   const [experience, setExperience] = useState<ExperienceLevel>('six_to_24_months');
   const [daysPerWeek, setDaysPerWeek] = useState<number>(3.5);
   const [setsPerDay, setSetsPerDay] = useState<number>(4);
   const [priorityMuscles, setPriorityMuscles] = useState<Muscle[]>(['chest']);
+  const [enabledEquipment, setEnabledEquipment] = useState<string[]>(() =>
+    getActiveEquipmentList(null)
+  );
+  const [backpack, setBackpack] = useState<boolean>(false);
+  const [weightVest, setWeightVest] = useState<boolean>(false);
+  const [showEquipmentModal, setShowEquipmentModal] = useState<boolean>(false);
 
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<{
@@ -57,13 +69,22 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
     }
   };
 
+  const handleToggleEquipment = (eqId: string) => {
+    setEnabledEquipment((prev) => {
+      const exists = prev.includes(eqId);
+      const updated = exists ? prev.filter((id) => id !== eqId) : [...prev, eqId];
+      if (eqId === 'backpack') setBackpack(!exists);
+      if (eqId === 'weight_vest') setWeightVest(!exists);
+      return updated;
+    });
+  };
+
   useEffect(() => {
     api.getSettings().then((s) => {
       if (s) {
         if (s.units && s.units !== 'metric') {
           setUnits(s.units);
-          setWeight(Math.round(75 * KG_TO_LB));
-          setBedHeight(Math.round(50 * CM_TO_IN));
+          setWeightDisplay(toDisplayWeight(75, s.units));
         }
         if (s.experience) {
           setExperience(s.experience);
@@ -77,19 +98,22 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
         if (s.priority_muscles && s.priority_muscles.length > 0) {
           setPriorityMuscles(s.priority_muscles);
         }
+        if (s.enabled_equipment && s.enabled_equipment.length > 0) {
+          setEnabledEquipment(s.enabled_equipment);
+        }
+        if (s.backpack !== undefined) {
+          setBackpack(s.backpack);
+        }
+        if (s.weight_vest !== undefined) {
+          setWeightVest(s.weight_vest);
+        }
       }
     }).catch(console.error);
   }, []);
 
   const handleUnitsChange = (newUnits: Units) => {
     if (newUnits !== units) {
-      if (newUnits === 'imperial') {
-        setWeight(Math.round(weight * KG_TO_LB));
-        setBedHeight(Math.round(bedHeight * CM_TO_IN));
-      } else {
-        setWeight(Math.round(weight / KG_TO_LB));
-        setBedHeight(Math.round(bedHeight / CM_TO_IN));
-      }
+      setWeightDisplay(toDisplayWeight(weightKg, newUnits));
       setUnits(newUnits);
     }
   };
@@ -98,16 +122,12 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
     e.preventDefault();
     setLoading(true);
 
-    // Convert to metric if user input imperial
-    const weightKg = units === 'imperial' ? weight / KG_TO_LB : weight;
-    const bedHeightCm = units === 'imperial' ? bedHeight / CM_TO_IN : bedHeight;
-
     const answers: CalibrationAnswers = {
       body_weight_kg: weightKg,
-      bed_height_cm: bedHeightCm,
+      bed_height_cm: 35.0,
       push_ups_4_set_avg: pushUpsAvg,
       pull_ups_4_set_avg: pullUpsAvg,
-      sets_close_to_failure: closeToFailure,
+      sets_close_to_failure: true,
       experience,
     };
 
@@ -117,10 +137,13 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
         ...currentSettings,
         units,
         experience,
-        bed_height_cm: bedHeightCm,
+        bed_height_cm: 35.0,
         days_per_week: daysPerWeek,
         sets_per_day: setsPerDay,
         priority_muscles: priorityMuscles,
+        enabled_equipment: enabledEquipment,
+        backpack,
+        weight_vest: weightVest,
       });
 
       const [, startingPush, addedWeight] = await api.calibrate(answers);
@@ -158,7 +181,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
             </p>
           )}
           <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '0.88rem', color: '#94a3b8' }}>
-            <span>📅 {daysPerWeek} days/wk</span> • <span>🔢 {setsPerDay} sets/session</span> • <span>⭐ {priorityMuscles.join(', ')}</span>
+            <span>📅 {daysPerWeek} days/wk</span> • <span>🔢 {setsPerDay} sets/session</span> • <span>⭐ {priorityMuscles.join(', ')}</span> • <span>🏋️ {formatActiveEquipmentSummary(enabledEquipment)}</span>
           </div>
         </div>
 
@@ -170,37 +193,37 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
   }
 
   return (
-    <div className="card onboarding-card">
-      <div className="onboarding-header">
-        <div className="onboarding-badge">Step 1 of 1 • Calibration</div>
-        <h2>First-Launch Baseline Calibration</h2>
-        <p className="subtitle">
-          Configure your baseline physical metrics and strength levels to calculate your personalized bodyweight load fractions, Epley 1RMs, and starting progression ladder rungs.
-        </p>
-      </div>
-
-      <form onSubmit={handleSubmit} className="form-grid">
-        <div className="form-group">
-          <label>Units Preference</label>
-          <div className="segmented-control">
-            <button
-              type="button"
-              className={`segmented-btn ${units === 'metric' ? 'active' : ''}`}
-              onClick={() => handleUnitsChange('metric')}
-            >
-              Metric (kg, cm)
-            </button>
-            <button
-              type="button"
-              className={`segmented-btn ${units === 'imperial' ? 'active' : ''}`}
-              onClick={() => handleUnitsChange('imperial')}
-            >
-              Imperial (lb, in)
-            </button>
-          </div>
+    <>
+      <div className="card onboarding-card">
+        <div className="onboarding-header">
+          <div className="onboarding-badge">Step 1 of 1 • Calibration</div>
+          <h2>First-Launch Baseline Calibration</h2>
+          <p className="subtitle">
+            Configure your baseline physical metrics and strength levels to calculate your personalized bodyweight load fractions, Epley 1RMs, and starting progression ladder rungs.
+          </p>
         </div>
 
-        <div className="form-row-2col">
+        <form onSubmit={handleSubmit} className="form-grid">
+          <div className="form-group">
+            <label>Units Preference</label>
+            <div className="segmented-control">
+              <button
+                type="button"
+                className={`segmented-btn ${units === 'metric' ? 'active' : ''}`}
+                onClick={() => handleUnitsChange('metric')}
+              >
+                Metric (kg, cm)
+              </button>
+              <button
+                type="button"
+                className={`segmented-btn ${units === 'imperial' ? 'active' : ''}`}
+                onClick={() => handleUnitsChange('imperial')}
+              >
+                Imperial (lb, in)
+              </button>
+            </div>
+          </div>
+
           <div className="form-group">
             <label>Body Weight ({units === 'metric' ? 'kg' : 'lb'})</label>
             <input
@@ -208,94 +231,83 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
               step="0.5"
               min="30"
               max="600"
-              value={weight}
-              onChange={(e) => setWeight(parseFloat(e.target.value) || 0)}
+              value={weightDisplay}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value) || 0;
+                setWeightDisplay(val);
+                setWeightKg(units === 'imperial' ? val / KG_TO_LB : val);
+              }}
               required
             />
           </div>
 
-          <div className="form-group">
-            <label>Bed Height ({units === 'metric' ? 'cm' : 'in'})</label>
-            <span className="help-text">
-              For incline & feet-elevated push-up leverage (default {units === 'metric' ? '50 cm' : '20 in'}).
-            </span>
-            <input
-              type="number"
-              step="1"
-              min={units === 'metric' ? "20" : "8"}
-              max={units === 'metric' ? "120" : "48"}
-              value={bedHeight}
-              onChange={(e) => setBedHeight(parseFloat(e.target.value) || 0)}
-              required
-            />
-          </div>
-        </div>
-
-        <div className="form-row-2col">
-          <div className="form-group">
-            <label>Push-ups (Average reps over 4 sets)</label>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              max="100"
-              value={pushUpsAvg}
-              onChange={(e) => setPushUpsAvg(parseInt(e.target.value) || 0)}
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Pull-ups or Chin-ups (Average reps over 4 sets)</label>
-            <span className="help-text">Enter 0 to start on assisted/eccentric pull-up progression.</span>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              max="60"
-              value={pullUpsAvg}
-              onChange={(e) => setPullUpsAvg(parseInt(e.target.value) || 0)}
-              required
-            />
-          </div>
-        </div>
-
-        <div className="form-group">
-          <label>Were those sets taken close to failure?</label>
-          <span className="help-text">
-            "Close to failure" means stopping with 0–3 reps left before technical failure.
-          </span>
-          <div className="choice-cards-grid">
-            <div
-              className={`choice-card ${closeToFailure ? 'active' : ''}`}
-              onClick={() => setCloseToFailure(true)}
-            >
-              <div className="choice-card-header">
-                <span className="choice-card-icon">🔥</span>
-                <span className="choice-card-title">Yes (Within 0–3 reps of failure)</span>
-                <span className="choice-card-radio">{closeToFailure ? '●' : '○'}</span>
-              </div>
-              <p className="choice-card-desc">
-                High-stimulus sets. App applies standard 4-set drop-off factor (avg ÷ 0.80).
-              </p>
+          <div className="form-row-2col">
+            <div className="form-group">
+              <label>Push-ups (Average reps over 4 sets)</label>
+              <input
+                type="number"
+                step="1"
+                min="0"
+                max="100"
+                value={pushUpsAvg}
+                onChange={(e) => setPushUpsAvg(parseInt(e.target.value) || 0)}
+                required
+              />
             </div>
-            <div
-              className={`choice-card ${!closeToFailure ? 'active' : ''}`}
-              onClick={() => setCloseToFailure(false)}
-            >
-              <div className="choice-card-header">
-                <span className="choice-card-icon">⚡</span>
-                <span className="choice-card-title">No (4+ reps left in reserve)</span>
-                <span className="choice-card-radio">{!closeToFailure ? '●' : '○'}</span>
-              </div>
-              <p className="choice-card-desc">
-                Submaximal effort. App restores unused reps using milder drop-off (avg ÷ 0.90 + 4).
-              </p>
+
+            <div className="form-group">
+              <label>Pull-ups or Chin-ups (Average reps over 4 sets)</label>
+              <span className="help-text">Enter 0 to start on assisted/eccentric pull-up progression.</span>
+              <input
+                type="number"
+                step="1"
+                min="0"
+                max="60"
+                value={pullUpsAvg}
+                onChange={(e) => setPullUpsAvg(parseInt(e.target.value) || 0)}
+                required
+              />
             </div>
           </div>
-        </div>
 
-        <div className="form-group">
+          {/* Unified Equipment Option */}
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+            <label>Equipment Available</label>
+            <div
+              className="equipment-setting-card"
+              onClick={() => setShowEquipmentModal(true)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setShowEquipmentModal(true);
+                }
+              }}
+            >
+              <div className="equipment-card-left">
+                <span className="equipment-card-icon">🏋️</span>
+                <div>
+                  <div className="equipment-card-title">Available Equipment Configuration</div>
+                  <div className="equipment-card-subtitle">
+                    {formatActiveEquipmentSummary(enabledEquipment)} • Click to customize gear
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm equipment-manage-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowEquipmentModal(true);
+                }}
+              >
+                Manage Equipment ⚙️
+              </button>
+            </div>
+          </div>
+
+          <div className="form-group">
           <label>Training Experience Level</label>
           <div className="experience-cards-grid">
             {[
@@ -405,5 +417,76 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
         </div>
       </form>
     </div>
+
+      {/* Equipment Options Modal */}
+      {showEquipmentModal && (
+        <div className="modal-overlay" onClick={() => setShowEquipmentModal(false)}>
+          <div
+            className="modal-content equipment-modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '620px', width: '92%' }}
+          >
+            <div className="modal-header">
+              <h3>🏋️ Available Equipment</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowEquipmentModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <p className="modal-subtitle">
+              Turn your available gear on or off. The planner will automatically adapt exercises, progressions, and leverage based on what you have.
+            </p>
+
+            <div className="equipment-modal-list">
+              {ALL_EQUIPMENT_OPTIONS.map((item) => {
+                const isChecked = enabledEquipment.includes(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className={`equipment-item-row ${isChecked ? 'active' : ''}`}
+                    onClick={() => handleToggleEquipment(item.id)}
+                  >
+                    <div className="equipment-item-left">
+                      <span className="equipment-item-icon">{item.icon}</span>
+                      <div>
+                        <div className="equipment-item-header">
+                          <span className="equipment-item-name">{item.name}</span>
+                          <span className={`equipment-scope-pill scope-${item.scope}`}>
+                            {item.scopeBadge}
+                          </span>
+                        </div>
+                        <div className="equipment-item-desc">{item.description}</div>
+                      </div>
+                    </div>
+                    <label className="toggle-switch" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleEquipment(item.id)}
+                      />
+                      <span className="slider"></span>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setShowEquipmentModal(false)}
+                style={{ padding: '0.6rem 1.5rem', fontWeight: 700 }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };

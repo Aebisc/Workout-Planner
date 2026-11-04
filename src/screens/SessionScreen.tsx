@@ -10,9 +10,12 @@ import {
   SessionExerciseSummary,
   SetLog,
   Settings,
+  Profile,
 } from '../types';
 import { formatBackpackLoad } from '../utils/units';
+import { calculateDifficultyMetrics, isDumbbellExercise } from '../utils/difficulty';
 import { registerModalBackHandler } from '../utils/androidBack';
+import { remapDraftSets } from '../utils/sessionDrafts';
 import {
   formatTimerMMSS,
   getOptimalRestSeconds,
@@ -54,10 +57,25 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
     reason: string;
   } | null>(null);
 
+  const [sessionId] = useState<string>(() => {
+    const draftKey = `mgp_active_session_id_${sessionNumber}`;
+    try {
+      const existing = localStorage.getItem(draftKey);
+      if (existing) return existing;
+      const newId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      localStorage.setItem(draftKey, newId);
+      return newId;
+    } catch {
+      return `sess_${Date.now()}`;
+    }
+  });
+
   // Active workout session's sets: Record<blockIndex, SetLog[]>
   const [currentSessionSets, setCurrentSessionSets] = useState<Record<number, SetLog[]>>(() => {
     try {
-      const saved = sessionStorage.getItem(`mgp_active_session_${sessionNumber}`);
+      const saved = localStorage.getItem(`mgp_active_draft_session_${sessionNumber}`) || sessionStorage.getItem(`mgp_active_session_${sessionNumber}`);
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -75,11 +93,13 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
     muscle: Muscle;
     exerciseId: string;
     blockIndex: number;
+    addedWeightKg: number;
   }>({
     isOpen: false,
     muscle: 'chest',
     exerciseId: '',
     blockIndex: 0,
+    addedWeightKg: 0,
   });
 
   // Finishing session state
@@ -151,16 +171,35 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
   }, [sessionCompletedSummary]);
 
   const [appliedSuggestions, setAppliedSuggestions] = useState<Record<string, boolean>>({});
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [restoredDeload, setRestoredDeload] = useState<boolean>(false);
+  const [historicalSetLogs, setHistoricalSetLogs] = useState<SetLog[]>([]);
+  const [prsAchieved, setPrsAchieved] = useState<
+    Array<{
+      exerciseName: string;
+      newRecord: number;
+      previousBest: number;
+      diff: number;
+      isTimeBased: boolean;
+    }>
+  >([]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [sess, allEx] = await Promise.all([
+      api.getProfile().then(setProfile).catch(() => {});
+      const [sess, allEx, allLogs] = await Promise.all([
         api.getSession(sessionNumber),
         api.getExercises(),
+        api.getSetLogs().catch(() => [] as SetLog[]),
       ]);
+      setHistoricalSetLogs(allLogs);
       setSession(sess);
+      // Swaps and applied progressions re-sort blocks; keep draft sets attached
+      // to the exercise they were logged for, not to a stale block index.
+      if (sess) {
+        setCurrentSessionSets((prev) => remapDraftSets(prev, session, sess));
+      }
 
       const exMap: Record<string, Exercise> = {};
       allEx.forEach((e) => (exMap[e.id] = e));
@@ -184,7 +223,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
 
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem(`mgp_active_session_${sessionNumber}`);
+      const saved = localStorage.getItem(`mgp_active_draft_session_${sessionNumber}`) || sessionStorage.getItem(`mgp_active_session_${sessionNumber}`);
       setCurrentSessionSets(saved ? JSON.parse(saved) : {});
     } catch {
       setCurrentSessionSets({});
@@ -193,23 +232,51 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
   }, [sessionNumber]);
 
   useEffect(() => {
-    const key = `mgp_active_session_${sessionNumber}`;
+    const draftKey = `mgp_active_draft_session_${sessionNumber}`;
     try {
       const allSets = Object.values(currentSessionSets).flat();
       if (allSets.length > 0) {
         if (allSets.every((s) => s.session_number === sessionNumber)) {
-          sessionStorage.setItem(key, JSON.stringify(currentSessionSets));
+          localStorage.setItem(draftKey, JSON.stringify(currentSessionSets));
         }
       } else {
-        sessionStorage.removeItem(key);
+        localStorage.removeItem(draftKey);
       }
     } catch (e) {
-      console.error('Failed to sync active session sets to sessionStorage', e);
+      console.error('Failed to sync active session sets to localStorage', e);
     }
   }, [currentSessionSets, sessionNumber]);
 
+  const getExerciseHistoryStats = (exerciseId: string) => {
+    const prevLogs = historicalSetLogs.filter(
+      (l) => l.exercise_id === exerciseId && (!l.session_id || l.session_id !== sessionId)
+    );
+    if (prevLogs.length === 0) {
+      return { lastPerf: null, allTimeMaxReps: 0 };
+    }
+
+    const allTimeMaxReps = Math.max(...prevLogs.map((l) => l.reps_or_seconds));
+    const sorted = [...prevLogs].sort((a, b) => b.timestamp - a.timestamp);
+    const latestTs = sorted[0].timestamp;
+    const lastSessionSets = sorted
+      .filter((l) => Math.abs(l.timestamp - latestTs) < 43_200_000)
+      .reverse();
+
+    const reps = lastSessionSets.map((l) => l.reps_or_seconds);
+    const addedWeight = lastSessionSets[0]?.added_weight_kg || 0;
+    const avgRir =
+      lastSessionSets.reduce((acc, l) => acc + l.reps_from_failure, 0) /
+      (lastSessionSets.length || 1);
+
+    return {
+      lastPerf: { reps, addedWeight, avgRir },
+      allTimeMaxReps,
+    };
+  };
+
   const handleAddSet = (blockIndex: number, exerciseId: string) => {
     const input = activeInput[blockIndex] || { reps: 10, rir: 2 };
+    if (input.reps <= 0 || isNaN(input.reps)) return;
     const block = session?.blocks[blockIndex];
     const ex = exercises[exerciseId];
 
@@ -221,6 +288,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
       reps_or_seconds: input.reps,
       added_weight_kg: block?.added_weight_kg || 0.0,
       reps_from_failure: input.rir,
+      session_id: sessionId,
     };
 
     setCurrentSessionSets((prev) => {
@@ -228,19 +296,28 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
       return { ...prev, [blockIndex]: [...existing, newLog] };
     });
 
-    const rec = getOptimalRestSeconds(ex, block, input.rir);
-    const exName = ex ? ex.name : exerciseId.replace(/_/g, ' ');
-    setRestTimer({
-      isActive: true,
-      isFinished: false,
-      blockIndex,
-      exerciseName: exName,
-      totalSeconds: rec.seconds,
-      remainingSeconds: rec.seconds,
-      endTimeMs: Date.now() + rec.seconds * 1000,
-      label: rec.label,
-      reason: rec.reason,
-    });
+    // Smart Rest Timer Finish: if this was the final planned set of the entire workout, skip rest timer
+    const isLastBlock = blockIndex === (session?.blocks.length || 0) - 1;
+    const setsAfterThis = (currentSessionSets[blockIndex]?.length || 0) + 1;
+    const isFinalTargetSetOfWorkout = isLastBlock && block && setsAfterThis >= block.sets;
+
+    if (isFinalTargetSetOfWorkout) {
+      setRestTimer(null);
+    } else {
+      const rec = getOptimalRestSeconds(ex, block, input.rir);
+      const exName = ex ? ex.name : exerciseId.replace(/_/g, ' ');
+      setRestTimer({
+        isActive: true,
+        isFinished: false,
+        blockIndex,
+        exerciseName: exName,
+        totalSeconds: rec.seconds,
+        remainingSeconds: rec.seconds,
+        endTimeMs: Date.now() + rec.seconds * 1000,
+        label: rec.label,
+        reason: rec.reason,
+      });
+    }
   };
 
   const handleRemoveSet = (blockIndex: number, setIndex: number) => {
@@ -262,6 +339,34 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
 
     setSubmittingSession(true);
     try {
+      // Calculate any PRs achieved during this workout
+      const newlyAchievedPRs: Array<{
+        exerciseName: string;
+        newRecord: number;
+        previousBest: number;
+        diff: number;
+        isTimeBased: boolean;
+      }> = [];
+
+      session.blocks.forEach((b, bIdx) => {
+        const bLogs = currentSessionSets[bIdx] || [];
+        const { allTimeMaxReps } = getExerciseHistoryStats(b.exercise_id);
+        if (allTimeMaxReps > 0 && bLogs.length > 0) {
+          const topRep = Math.max(0, ...bLogs.map((l) => l.reps_or_seconds));
+          if (topRep > allTimeMaxReps) {
+            const ex = exercises[b.exercise_id];
+            newlyAchievedPRs.push({
+              exerciseName: ex ? ex.name : b.exercise_id.replace(/_/g, ' '),
+              newRecord: topRep,
+              previousBest: allTimeMaxReps,
+              diff: topRep - allTimeMaxReps,
+              isTimeBased: ex?.time_based ?? false,
+            });
+          }
+        }
+      });
+      setPrsAchieved(newlyAchievedPRs);
+
       const exercisesSummary: SessionExerciseSummary[] = session.blocks
         .map((b, bIdx) => {
           const bLogs = currentSessionSets[bIdx] || [];
@@ -283,7 +388,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
         .filter((s) => s.sets_completed > 0);
 
       const completedSession: CompletedSession = {
-        id: `sess-${session.session_number}-${Date.now()}`,
+        id: sessionId,
         timestamp: Date.now(),
         session_number: session.session_number,
         focus: session.focus,
@@ -294,9 +399,11 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
       const response = await api.completeSession(completedSession, allLoggedSets);
 
       try {
+        localStorage.removeItem(`mgp_active_draft_session_${session.session_number}`);
+        localStorage.removeItem(`mgp_active_session_id_${session.session_number}`);
         sessionStorage.removeItem(`mgp_active_session_${session.session_number}`);
       } catch (e) {
-        console.error('Failed to remove active session from sessionStorage', e);
+        console.error('Failed to remove active session from storage', e);
       }
       setCurrentSessionSets({});
       setRestTimer(null);
@@ -323,12 +430,32 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
     actionKey: string
   ) => {
     try {
-      await api.applyProgression({
+      const updatedPlan = await api.applyProgression({
         sessionNumber: sugg.session_number,
         blockIndex: sugg.block_index,
         ...params,
       });
       setAppliedSuggestions((prev) => ({ ...prev, [actionKey]: true }));
+
+      // Advancing a variation re-sorts blocks; re-align the remaining suggestions
+      // to the fresh order (and drop ones whose exercise no longer exists).
+      const freshSession = updatedPlan.sessions.find(
+        (s) => s.session_number === sugg.session_number
+      );
+      if (freshSession) {
+        setSessionCompletedSummary((prev) => {
+          if (!prev) return prev;
+          const suggestions = prev.suggestions
+            .map((sg) => {
+              const idx = freshSession.blocks.findIndex(
+                (b) => b.exercise_id === sg.exercise_id
+              );
+              return idx >= 0 ? { ...sg, block_index: idx } : null;
+            })
+            .filter((sg): sg is ProgressionSuggestion => sg !== null);
+          return { ...prev, suggestions };
+        });
+      }
       loadData();
     } catch (err) {
       alert(`Failed to apply progression: ${err}`);
@@ -507,6 +634,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
           const blockLogs = currentSessionSets[bIdx] || [];
           const currentInput = activeInput[bIdx] || { reps: 10, rir: 2 };
           const isBlockFinished = blockLogs.length >= block.sets;
+          const { lastPerf, allTimeMaxReps } = getExerciseHistoryStats(block.exercise_id);
 
           return (
             <div key={bIdx} className="card block-card">
@@ -527,6 +655,31 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                     {ex && ex.stretched_position && (
                       <span className="badge badge-accent">Stretch overload</span>
                     )}
+                    {(() => {
+                      if (!ex || isDumbbellExercise(ex)) return null;
+                      const dm = calculateDifficultyMetrics(
+                        ex,
+                        profile?.body_weight_kg,
+                        block.added_weight_kg,
+                        settings.units,
+                        block.tempo_cue,
+                        settings.bed_height_cm
+                      );
+                      return (
+                        <span
+                          className="badge"
+                          style={{
+                            background: 'rgba(99, 102, 241, 0.18)',
+                            color: '#a5b4fc',
+                            border: '1px solid rgba(99, 102, 241, 0.4)',
+                            fontWeight: 700,
+                          }}
+                          title="Biomechanical Resistance: Difficulty Level, Total Effective Load, and % of Body Weight"
+                        >
+                          ⚡ {dm.fullBadgeText}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -538,6 +691,7 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                       muscle: ex?.primary_muscle || 'chest',
                       exerciseId: block.exercise_id,
                       blockIndex: bIdx,
+                      addedWeightKg: block.added_weight_kg ?? 0,
                     })
                   }
                 >
@@ -573,6 +727,44 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Last Session Performance Reference Banner */}
+              {lastPerf ? (
+                <div
+                  style={{
+                    margin: '0.75rem 0 0.5rem',
+                    padding: '0.5rem 0.85rem',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'rgba(99, 102, 241, 0.08)',
+                    border: '1px solid rgba(99, 102, 241, 0.25)',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  <span style={{ fontWeight: 800, color: 'var(--primary)', marginRight: '0.4rem' }}>
+                    ⚡ Last Session:
+                  </span>
+                  <strong>{lastPerf.reps.join(', ')} {exercises[block.exercise_id]?.time_based ? 's' : 'reps'}</strong>
+                  {lastPerf.addedWeight > 0 && (
+                    <span style={{ color: 'var(--cyan)', fontWeight: 700 }}> @ +{lastPerf.addedWeight}kg</span>
+                  )}
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '0.4rem' }}>
+                    (avg {lastPerf.avgRir.toFixed(1)} RIR)
+                  </span>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    margin: '0.75rem 0 0.5rem',
+                    padding: '0.45rem 0.85rem',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    fontSize: '0.82rem',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  ⚡ <strong>Last Session:</strong> First time logging this variation!
+                </div>
+              )}
 
               {/* Set Logger Section */}
               <div className="logger-section mt-3">
@@ -684,24 +876,42 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                 {/* Logged Sets Badges with remove capability */}
                 {blockLogs.length > 0 && (
                   <div className="logged-chips mt-2">
-                    {blockLogs.map((log, lIdx) => (
-                      <span
-                        key={lIdx}
-                        className={`chip ${
-                          log.reps_from_failure <= 3 ? 'chip-success' : 'chip-warning'
-                        }`}
-                      >
-                        Set {lIdx + 1}: {log.reps_or_seconds} {block.seconds_target_min ? 's' : 'reps'} (RIR {log.reps_from_failure})
-                        <button
-                          type="button"
-                          className="chip-remove-btn"
-                          title="Remove this set"
-                          onClick={() => handleRemoveSet(bIdx, lIdx)}
+                    {blockLogs.map((log, lIdx) => {
+                      const isPR = allTimeMaxReps > 0 && log.reps_or_seconds > allTimeMaxReps;
+                      return (
+                        <span
+                          key={lIdx}
+                          className={`chip ${
+                            log.reps_from_failure <= 3 ? 'chip-success' : 'chip-warning'
+                          }`}
                         >
-                          ✕
-                        </button>
-                      </span>
-                    ))}
+                          Set {lIdx + 1}: {log.reps_or_seconds} {block.seconds_target_min ? 's' : 'reps'} (RIR {log.reps_from_failure})
+                          {isPR && (
+                            <span
+                              style={{
+                                fontSize: '0.7rem',
+                                fontWeight: 800,
+                                background: 'linear-gradient(135deg, #fbbf24, #d97706)',
+                                color: '#000',
+                                padding: '0.1rem 0.4rem',
+                                borderRadius: '999px',
+                                marginLeft: '0.35rem',
+                              }}
+                            >
+                              🏆 PR
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            className="chip-remove-btn"
+                            title="Remove this set"
+                            onClick={() => handleRemoveSet(bIdx, lIdx)}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -709,6 +919,23 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
           );
         })}
       </div>
+
+      {/* All Prescribed Sets Completed Notification */}
+      {session.blocks.length > 0 &&
+        session.blocks.every((b, idx) => (currentSessionSets[idx] || []).length >= b.sets) && (
+          <div
+            className="alert alert-success mt-3"
+            style={{
+              background: 'rgba(16, 185, 129, 0.15)',
+              borderColor: '#10b981',
+              color: '#34d399',
+              textAlign: 'center',
+              fontWeight: 700,
+            }}
+          >
+            🎉 All prescribed sets completed for today! Press Done below to record your workout.
+          </div>
+        )}
 
       {/* Done Button Footer Section at the bottom */}
       <div className="session-finish-card card">
@@ -756,6 +983,33 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
               </div>
             </div>
 
+            {/* PRs Achieved Box */}
+            {prsAchieved.length > 0 && (
+              <div
+                style={{
+                  margin: '1rem 0',
+                  padding: '0.85rem 1rem',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.25))',
+                  border: '1px solid #f59e0b',
+                  textAlign: 'left',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
+                  <span style={{ fontSize: '1.2rem' }}>🏆</span>
+                  <strong style={{ color: '#fbbf24', fontSize: '0.95rem' }}>
+                    New Personal Record{prsAchieved.length > 1 ? 's' : ''}!
+                  </strong>
+                </div>
+                {prsAchieved.map((pr, pIdx) => (
+                  <div key={pIdx} style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                    <strong>{pr.exerciseName}:</strong> {pr.newRecord} {pr.isTimeBased ? 'sec' : 'reps'}{' '}
+                    <span style={{ color: '#34d399', fontWeight: 700 }}>(+{pr.diff} vs previous best {pr.previousBest})</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Deload Cycle Completion Prompt */}
             {sessionCompletedSummary.deloadCycleCompleted && (
               <div className="card mb-4 deload-complete-card">
@@ -791,9 +1045,9 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                   {sessionCompletedSummary.suggestions.map((sugg, sIdx) => {
                     const exName = exercises[sugg.exercise_id]?.name || sugg.exercise_id.replace(/_/g, ' ');
                     const isStall = sugg.action === 'stall_detected';
-                    const tempoKey = `${sugg.block_index}-${sugg.action}-tempo`;
-                    const advanceKey = `${sugg.block_index}-${sugg.action}-advance`;
-                    const backpackKey = `${sugg.block_index}-${sugg.action}-backpack`;
+                    const tempoKey = `${sugg.exercise_id}-${sugg.action}-tempo`;
+                    const advanceKey = `${sugg.exercise_id}-${sugg.action}-advance`;
+                    const backpackKey = `${sugg.exercise_id}-${sugg.action}-backpack`;
 
                     return (
                       <div
@@ -844,6 +1098,65 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
                                     }
                                   >
                                     ⬆ Advance to {sugg.next_exercise_id.replace(/_/g, ' ')}
+                                  </button>
+                                )
+                              )}
+                            </>
+                          )}
+
+                          {sugg.action === 'dual_progression' && (
+                            <>
+                              {sugg.new_added_weight_kg !== null && (
+                                appliedSuggestions[backpackKey] ? (
+                                  <span className="badge badge-success">✓ Applied Added Load</span>
+                                ) : (
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    onClick={() =>
+                                      handleApplyProgression(
+                                        sugg,
+                                        { newAddedWeightKg: sugg.new_added_weight_kg },
+                                        backpackKey
+                                      )
+                                    }
+                                  >
+                                    🦺 Weighted: Add {settings.units === 'imperial' ? `${((sugg.new_added_weight_kg || 0) * 2.20462).toFixed(1)} lb` : `${sugg.new_added_weight_kg} kg`}
+                                  </button>
+                                )
+                              )}
+                              {sugg.next_exercise_id && (
+                                appliedSuggestions[advanceKey] ? (
+                                  <span className="badge badge-success">✓ Advanced Variation</span>
+                                ) : (
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() =>
+                                      handleApplyProgression(
+                                        sugg,
+                                        { newExerciseId: sugg.next_exercise_id },
+                                        advanceKey
+                                      )
+                                    }
+                                  >
+                                    ⬆ Bodyweight: Advance to {exercises[sugg.next_exercise_id]?.name || sugg.next_exercise_id.replace(/_/g, ' ')}
+                                  </button>
+                                )
+                              )}
+                              {sugg.new_tempo_cue && !sugg.next_exercise_id && (
+                                appliedSuggestions[tempoKey] ? (
+                                  <span className="badge badge-success">✓ Applied Tempo Cue</span>
+                                ) : (
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() =>
+                                      handleApplyProgression(
+                                        sugg,
+                                        { newTempoCue: sugg.new_tempo_cue },
+                                        tempoKey
+                                      )
+                                    }
+                                  >
+                                    ⏱ Bodyweight: 3–4s Tempo & Pause
                                   </button>
                                 )
                               )}
@@ -968,10 +1281,20 @@ export const SessionScreen: React.FC<SessionScreenProps> = ({
         onClose={() => setSwapModal((prev) => ({ ...prev, isOpen: false }))}
         targetMuscle={swapModal.muscle}
         currentExerciseId={swapModal.exerciseId}
+        currentAddedWeightKg={swapModal.addedWeightKg}
         sessionNumber={sessionNumber}
         blockIndex={swapModal.blockIndex}
         onSwapped={loadData}
         backpackEnabled={settings.backpack}
+        confirmSwap={(blockIndex) => {
+          const logged = (currentSessionSets[blockIndex] || []).length;
+          if (logged > 0) {
+            return window.confirm(
+              `You have ${logged} logged set${logged > 1 ? 's' : ''} for this exercise in your draft. Swapping will discard ${logged > 1 ? 'them' : 'it'}. Continue?`
+            );
+          }
+          return true;
+        }}
       />
     </div>
   );

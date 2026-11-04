@@ -6,14 +6,11 @@ pub mod scheduler;
 pub mod storage;
 pub mod volume;
 
-use models::{Exercise, MuscleWeights, WarningTiersData};
-use std::collections::HashMap;
-#[cfg(desktop)]
+use models::{Exercise, WarningTiersData};
 use tauri::Manager;
 
 pub static EXERCISES_JSON: &str = include_str!("../data/exercises.json");
 pub static WARNING_TIERS_JSON: &str = include_str!("../data/warning_tiers.json");
-pub static MUSCLE_WEIGHTS_JSON: &str = include_str!("../data/muscle_weights.json");
 
 pub fn load_embedded_exercises() -> Vec<Exercise> {
     serde_json::from_str(EXERCISES_JSON).expect("Failed to parse embedded exercises.json")
@@ -23,14 +20,40 @@ pub fn load_embedded_warning_tiers() -> WarningTiersData {
     serde_json::from_str(WARNING_TIERS_JSON).expect("Failed to parse embedded warning_tiers.json")
 }
 
-pub fn load_embedded_muscle_weights() -> HashMap<String, MuscleWeights> {
-    serde_json::from_str(MUSCLE_WEIGHTS_JSON).expect("Failed to parse embedded muscle_weights.json")
+#[cfg(target_os = "android")]
+const REST_TIMER_IDENTIFIER: &str = "com.musclegrowthplanner.app";
+
+#[cfg(target_os = "android")]
+#[derive(Clone)]
+pub struct RestTimerHandle(pub tauri::plugin::PluginHandle<tauri::Wry>);
+
+#[cfg(not(target_os = "android"))]
+#[derive(Clone)]
+pub struct RestTimerHandle;
+
+fn init_rest_timer_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::<tauri::Wry>::new("rest_timer")
+        .setup(|app, api| {
+            #[cfg(target_os = "android")]
+            {
+                let handle = api.register_android_plugin(REST_TIMER_IDENTIFIER, "RestTimerPlugin")?;
+                app.manage(RestTimerHandle(handle));
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                let _ = (app, api);
+                app.manage(RestTimerHandle);
+            }
+            Ok(())
+        })
+        .build()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(init_rest_timer_plugin())
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -48,12 +71,12 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::get_profile,
+            commands::update_profile,
             commands::calibrate,
             commands::get_plan,
             commands::generate_plan,
             commands::get_session,
             commands::swap_exercise,
-            commands::log_set,
             commands::get_warnings,
             commands::get_exercises,
             commands::get_set_logs,
@@ -70,6 +93,10 @@ pub fn run() {
             commands::stop_lan_sync_server,
             commands::get_lan_sync_status,
             commands::get_lan_client_meta,
+            commands::start_rest_timer_notification,
+            commands::cancel_rest_timer_notification,
+            commands::adjust_rest_timer_notification,
+            commands::get_rest_timer_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -78,6 +105,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_embedded_data_files_parse() {
@@ -91,10 +119,6 @@ mod tests {
         let tiers = load_embedded_warning_tiers();
         assert_eq!(tiers.experienced.len(), 5);
         assert_eq!(tiers.beginner_factor, 0.7);
-
-        let weights = load_embedded_muscle_weights();
-        assert!(!weights.is_empty());
-        assert!(weights.contains_key("push_up"));
     }
 
     #[test]
@@ -222,6 +246,7 @@ mod tests {
             maintenance_dropped: false,
             is_deload: true,
             pre_deload_sessions: None,
+            scheduling_alerts: Vec::new(),
         };
 
         let set_log = models::SetLog {
@@ -232,6 +257,7 @@ mod tests {
             reps_or_seconds: 10,
             added_weight_kg: 5.0,
             reps_from_failure: 1,
+            session_id: None,
         };
 
         let completed = models::CompletedSession {

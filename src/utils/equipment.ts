@@ -52,11 +52,11 @@ export const ALL_EQUIPMENT_OPTIONS: EquipmentItem[] = [
   },
   {
     id: 'bed',
-    name: 'Bed / Elevation',
+    name: 'Bed / Elevation (35cm)',
     icon: '🛏️',
     scope: 'push',
     scopeBadge: 'Push Leverage',
-    description: 'Used for bed height angle leverage (Incline & Feet-Elevated Push-ups) and supported dumbbell rows.',
+    description: 'Fixed 35cm elevation used for incline and feet-elevated push-up leverage, plus supported dumbbell rows.',
   },
 ];
 

@@ -41,6 +41,7 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
   const [anchorKey, setAnchorKey] = useState<string>(() => {
     return localStorage.getItem('mgp_cycle_anchor_date') || '';
   });
+  const [shiftNotice, setShiftNotice] = useState<string | null>(null);
 
   useEffect(() => {
     api.getSessionHistory().then(setHistory).catch(console.error);
@@ -61,6 +62,24 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
   // Build cycle pattern array (length L)
   const L = Math.max(1, plan.cycle.length_days);
   const cyclePattern = buildCyclePattern(plan);
+
+  const handleShiftScheduleOneDay = () => {
+    const currentAnchor = resolveEffectiveAnchorKey({
+      anchorKey,
+      isManual: false,
+      history,
+      cyclePattern,
+    });
+    const [y, m, d] = currentAnchor.split('-').map(Number);
+    const date = new Date(y, (m || 1) - 1, d || 1);
+    date.setDate(date.getDate() + 1);
+    const nextAnchor = toLocalDateKey(date);
+    setAnchorKey(nextAnchor);
+    localStorage.setItem('mgp_cycle_anchor_date', nextAnchor);
+    localStorage.setItem('mgp_cycle_anchor_manual', 'true');
+    setShiftNotice('Schedule shifted forward by 1 day! Today is marked as a rest day. 🌴');
+    setTimeout(() => setShiftNotice(null), 4000);
+  };
 
   const handleRegenerate = async () => {
     setRegenerating(true);
@@ -292,6 +311,34 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
         </div>
       )}
 
+      {/* Shift Notification Banner */}
+      {shiftNotice && (
+        <div className="alert alert-success" style={{ background: 'rgba(16, 185, 129, 0.15)', borderColor: '#10b981', color: '#10b981', fontWeight: 600 }}>
+          {shiftNotice}
+        </div>
+      )}
+
+      {/* Unschedulable Volume Warning Banner (Alert Only) */}
+      {plan.scheduling_alerts && plan.scheduling_alerts.length > 0 && (
+        <div className="alert alert-warning" style={{ background: 'rgba(239, 68, 68, 0.15)', borderColor: '#ef4444' }}>
+          {plan.scheduling_alerts.map((alertMsg, aIdx) => (
+            <div
+              key={aIdx}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '1rem',
+                marginTop: aIdx > 0 ? '0.5rem' : 0,
+              }}
+            >
+              <span>⚠️ <strong>Equipment Warning:</strong> {alertMsg}</span>
+              <button className="btn btn-xs btn-outline" onClick={onOpenSettings}>Enable in Settings</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 14-Day Cycle Adherence Ribbon (Option 3) */}
       <div className="card opt3-ribbon-card">
         <div className="cal-header-row">
@@ -313,6 +360,14 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
                 <path d="M17.5 14v1M17.5 20v1M14 17.5h1M20 17.5h1" />
               </svg>
             </button>
+            <button
+              className="btn btn-outline btn-xs"
+              style={{ marginLeft: '0.4rem', height: '26px' }}
+              onClick={handleShiftScheduleOneDay}
+              title="Take an unscheduled rest day today and shift the cycle schedule forward by 1 day"
+            >
+              🌙 Shift Schedule +1d
+            </button>
           </div>
           <div className="cal-legend">
             <span><span className="legend-dot dot-done" />Trained (✓)</span>
@@ -329,9 +384,8 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
               className={`opt3-node ${day.isToday ? 'today-node' : ''} ${day.clickable ? 'clickable-node' : ''}`}
               title={day.tooltip}
               onClick={() => {
-                if (day.isToday && day.clickable && day.sessionNumber) {
-                  onSelectSession(day.sessionNumber);
-                } else if (day.completedSession) {
+                if (day.completedSession) {
+                  // Completed workouts (past or today) open the edit view, as the tooltip promises.
                   setEditSessionModal({
                     isOpen: true,
                     sessionToEdit: day.completedSession,
@@ -339,12 +393,17 @@ export const PlanOverviewScreen: React.FC<PlanOverviewScreenProps> = ({
                     initialSessionNumber: day.sessionNumber,
                   });
                 } else if (day.clickable && day.sessionNumber) {
-                  setEditSessionModal({
-                    isOpen: true,
-                    sessionToEdit: null,
-                    initialDate: day.dateKey,
-                    initialSessionNumber: day.sessionNumber,
-                  });
+                  if (day.isToday) {
+                    onSelectSession(day.sessionNumber);
+                  } else {
+                    // Missed scheduled day: offer backfilling the numbers.
+                    setEditSessionModal({
+                      isOpen: true,
+                      sessionToEdit: null,
+                      initialDate: day.dateKey,
+                      initialSessionNumber: day.sessionNumber,
+                    });
+                  }
                 }
               }}
             >

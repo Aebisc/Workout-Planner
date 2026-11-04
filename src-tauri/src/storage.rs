@@ -6,6 +6,19 @@ pub struct StorageManager {
     base_dir: PathBuf,
 }
 
+/// Writes via a temp file + rename so a crash mid-write cannot leave a truncated
+/// JSON file behind (fs::write truncates the destination in place).
+fn write_json_atomic(path: &Path, json: &str) -> Result<(), String> {
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, json)
+        .map_err(|e| format!("Failed to write {}: {}", tmp_path.display(), e))?;
+    // Windows rename fails when the destination exists, so remove it first.
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+    fs::rename(&tmp_path, path).map_err(|e| format!("Failed to persist {}: {}", path.display(), e))
+}
+
 impl StorageManager {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
         let base_dir = base_dir.as_ref().to_path_buf();
@@ -49,7 +62,7 @@ impl StorageManager {
         let path = self.settings_path();
         let json = serde_json::to_string_pretty(settings)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-        fs::write(&path, json).map_err(|e| format!("Failed to write settings: {}", e))
+        write_json_atomic(&path, &json)
     }
 
     pub fn load_profile(&self) -> Result<Profile, String> {
@@ -66,7 +79,7 @@ impl StorageManager {
         let path = self.profile_path();
         let json = serde_json::to_string_pretty(profile)
             .map_err(|e| format!("Failed to serialize profile: {}", e))?;
-        fs::write(&path, json).map_err(|e| format!("Failed to write profile: {}", e))
+        write_json_atomic(&path, &json)
     }
 
     pub fn load_plan(&self) -> Result<Option<Plan>, String> {
@@ -85,7 +98,7 @@ impl StorageManager {
         let path = self.plan_path();
         let json = serde_json::to_string_pretty(plan)
             .map_err(|e| format!("Failed to serialize plan: {}", e))?;
-        fs::write(&path, json).map_err(|e| format!("Failed to write plan: {}", e))
+        write_json_atomic(&path, &json)
     }
 
     pub fn load_set_logs(&self) -> Result<Vec<SetLog>, String> {
@@ -104,14 +117,14 @@ impl StorageManager {
         let path = self.set_log_path();
         let json = serde_json::to_string_pretty(&logs)
             .map_err(|e| format!("Failed to serialize set log: {}", e))?;
-        fs::write(&path, json).map_err(|e| format!("Failed to write set log: {}", e))
+        write_json_atomic(&path, &json)
     }
 
     pub fn save_set_logs(&self, logs: &[SetLog]) -> Result<(), String> {
         let path = self.set_log_path();
         let json = serde_json::to_string_pretty(logs)
             .map_err(|e| format!("Failed to serialize set logs: {}", e))?;
-        fs::write(&path, json).map_err(|e| format!("Failed to write set log: {}", e))
+        write_json_atomic(&path, &json)
     }
 
     pub fn load_session_history(&self) -> Result<Vec<CompletedSession>, String> {
@@ -128,7 +141,7 @@ impl StorageManager {
         let path = self.session_history_path();
         let json = serde_json::to_string_pretty(history)
             .map_err(|e| format!("Failed to serialize session history: {}", e))?;
-        fs::write(&path, json).map_err(|e| format!("Failed to write session history: {}", e))
+        write_json_atomic(&path, &json)
     }
 
     pub fn append_completed_session(&self, entry: &CompletedSession) -> Result<(), String> {
@@ -190,6 +203,7 @@ mod tests {
             maintenance_dropped: false,
             is_deload: false,
             pre_deload_sessions: None,
+            scheduling_alerts: Vec::new(),
         };
         storage.save_plan(&plan).unwrap();
         let loaded_plan = storage.load_plan().unwrap().unwrap();
@@ -205,6 +219,7 @@ mod tests {
             reps_or_seconds: 15,
             added_weight_kg: 0.0,
             reps_from_failure: 1,
+            session_id: None,
         };
         storage.append_set_log(&log).unwrap();
         let loaded_logs = storage.load_set_logs().unwrap();

@@ -116,6 +116,9 @@ export function playRestCompleteChime(soundEnabled: boolean = true): void {
     if (!AudioCtx) return;
 
     const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
     const now = ctx.currentTime;
 
     const notes = [587.33, 880]; // D5 -> A5

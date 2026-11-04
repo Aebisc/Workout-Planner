@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { CompletedSession, Exercise, Plan, SessionExerciseSummary, SetLog, Units } from '../types';
 import { registerModalBackHandler } from '../utils/androidBack';
@@ -48,6 +48,9 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
   const [saving, setSaving] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
   const [exercisesMap, setExercisesMap] = useState<Record<string, Exercise>>({});
+  // Ref mirror so the async exercise load never re-triggers form initialization
+  // (which would wipe in-progress user edits).
+  const exercisesMapRef = useRef<Record<string, Exercise>>({});
 
   useEffect(() => {
     if (isOpen) {
@@ -62,6 +65,7 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
       .then((list) => {
         const map: Record<string, Exercise> = {};
         list.forEach((e) => (map[e.id] = e));
+        exercisesMapRef.current = map;
         setExercisesMap(map);
       })
       .catch(console.error);
@@ -156,7 +160,7 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
       const targetSession = plan.sessions.find((s) => s.session_number === initialSessionNumber);
       if (targetSession) {
         const forms: ExerciseFormState[] = targetSession.blocks.map((b) => {
-          const ex = exercisesMap[b.exercise_id];
+          const ex = exercisesMapRef.current[b.exercise_id];
           return {
             exercise_id: b.exercise_id,
             exercise_name: ex?.name || b.exercise_id.replace(/_/g, ' '),
@@ -170,7 +174,7 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
         setExerciseForms(forms);
       }
     }
-  }, [isOpen, sessionToEdit, initialDate, initialSessionNumber, plan, exercisesMap]);
+  }, [isOpen, sessionToEdit, initialDate, initialSessionNumber, plan]);
 
   if (!isOpen) return null;
 
@@ -225,7 +229,12 @@ export const EditSessionModal: React.FC<EditSessionModalProps> = ({
     setSaving(true);
     try {
       const [y, m, d] = workoutDate.split('-').map(Number);
-      const timestamp = new Date(y, (m || 1) - 1, d || 1, 12, 0, 0).getTime();
+      // Keep the original time-of-day when the date is unchanged; only backfilled
+      // or re-dated workouts are stamped at noon of the chosen day.
+      const timestamp =
+        sessionToEdit && toLocalDateKey(new Date(sessionToEdit.timestamp)) === workoutDate
+          ? sessionToEdit.timestamp
+          : new Date(y, (m || 1) - 1, d || 1, 12, 0, 0).getTime();
 
       const exercisesSummary: SessionExerciseSummary[] = exerciseForms.map((ex) => {
         const totalRir = ex.sets.reduce((acc, s) => acc + s.rir, 0);

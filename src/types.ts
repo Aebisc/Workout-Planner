@@ -102,6 +102,7 @@ export interface Plan {
   maintenance_dropped: boolean;
   is_deload?: boolean;
   pre_deload_sessions?: Session[] | null;
+  scheduling_alerts?: string[];
 }
 
 export interface SetLog {
@@ -112,6 +113,7 @@ export interface SetLog {
   reps_or_seconds: number;
   added_weight_kg: number;
   reps_from_failure: number;
+  session_id?: string;
 }
 
 export interface Warning {

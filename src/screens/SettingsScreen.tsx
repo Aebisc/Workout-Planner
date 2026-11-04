@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
-import { ExperienceLevel, LanSyncStatus, Muscle, Settings, Units } from '../types';
+import { ExperienceLevel, LanSyncStatus, Muscle, Profile, Settings, Units } from '../types';
 import { toDisplayHeight, toMetricHeight, CM_TO_IN } from '../utils/units';
 import {
   exportBackupWithMeta,
@@ -90,8 +90,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [gistId, setGistId] = useState<string>(() => localStorage.getItem('mgp_gist_id') || '');
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(() => localStorage.getItem('mgp_last_synced'));
   const [showToken, setShowToken] = useState<boolean>(false);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [bodyWeightInput, setBodyWeightInput] = useState<string>("75.0");
 
   useEffect(() => {
+    api.getProfile().then((p) => {
+      setProfile(p);
+      const val = units === "imperial" ? ((p.body_weight_kg || 75.0) * 2.20462).toFixed(1) : (p.body_weight_kg || 75.0).toFixed(1);
+      setBodyWeightInput(val);
+    }).catch(console.error);
     api.getLanSyncStatus().then(setLanStatus).catch(console.error);
   }, []);
 
@@ -352,6 +359,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
     try {
       await api.updateSettings(updated);
+      const parsedBw = parseFloat(bodyWeightInput);
+      const weightKg = units === 'imperial' ? (parsedBw ? parsedBw / 2.20462 : 75.0) : (parsedBw || 75.0);
+      if (profile) {
+        await api.updateProfile({ ...profile, body_weight_kg: weightKg }).catch(console.error);
+      }
       setStatusMessage('Settings saved and training plan regenerated!');
       onSaved(updated);
     } catch (err) {
@@ -390,6 +402,23 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               Imperial (lb, in)
             </button>
           </div>
+        </div>
+
+        <div className="form-group">
+          <label>Body Weight ({units === 'imperial' ? 'lb' : 'kg'})</label>
+          <input
+            type="number"
+            step="0.5"
+            min="30"
+            max="300"
+            className="text-input"
+            value={bodyWeightInput}
+            onChange={(e) => setBodyWeightInput(e.target.value)}
+            placeholder={units === 'imperial' ? '165.0' : '75.0'}
+          />
+          <span className="field-hint" style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem', display: 'block' }}>
+            Used for calculating biomechanical difficulty levels, equivalent loads, and % bodyweight resistance.
+          </span>
         </div>
 
         {/* Unified Equipment Option */}

@@ -71,13 +71,14 @@ pub fn days_per_week_to_cycle(input: f64) -> Cycle {
         .filter(|c| (c.rate - input).abs() <= tolerance)
         .collect();
 
+    // Sort by closeness; on ties prefer the lower rate so an ambiguous input
+    // (e.g. 6.5 days/wk, equidistant from 6.0 and 7.0) never jumps to every day.
     within_tol.sort_by(|a, b| {
         let diff_a = (a.rate - input).abs();
         let diff_b = (b.rate - input).abs();
         diff_a
-            .partial_cmp(&diff_b)
-            .unwrap()
-            .then(a.length_days.cmp(&b.length_days))
+            .total_cmp(&diff_b)
+            .then(a.rate.total_cmp(&b.rate))
     });
 
     if let Some(best) = within_tol.first() {
@@ -96,11 +97,13 @@ pub fn days_per_week_to_cycle(input: f64) -> Cycle {
             let diff_a = (a.rate - input).abs();
             let diff_b = (b.rate - input).abs();
             diff_a
-                .partial_cmp(&diff_b)
-                .unwrap()
-                .then(a.length_days.cmp(&b.length_days))
+                .total_cmp(&diff_b)
+                .then(a.rate.total_cmp(&b.rate))
         });
-        let closest = all_sorted.first().unwrap();
+        let closest = match all_sorted.first() {
+            Some(c) => c,
+            None => &candidates[0],
+        };
         Cycle {
             length_days: closest.length_days,
             sessions_count: closest.sessions_count,
@@ -166,7 +169,9 @@ pub fn allocate_cycle_sets(
             maintenance_dropped = true;
         } else {
             // Allocate maintenance direct sets using carry-over blocks (>= 2 sets)
-            let mut remaining_budget = b_cycle;
+            // Hard-cap accumulated maintenance sets (including prior deficits) at 50% of B_cycle
+            let max_maint_budget = ((b_cycle as f64) * 0.50).floor() as u32;
+            let mut remaining_budget = max_maint_budget;
             for &m in &non_priority {
                 let indirect = indirect_received.get(&m).copied().unwrap_or(0.0);
                 let net_target = (per_cycle_target - indirect).max(0.0);
@@ -210,7 +215,7 @@ pub fn allocate_cycle_sets(
         sorted_priority.sort_by(|a, b| {
             let vol_a = cumulative_effective_sets.get(a).unwrap_or(&0.0);
             let vol_b = cumulative_effective_sets.get(b).unwrap_or(&0.0);
-            vol_a.partial_cmp(vol_b).unwrap()
+            vol_a.total_cmp(vol_b)
         });
 
         for p in sorted_priority {
@@ -239,7 +244,7 @@ pub fn allocate_cycle_sets(
                 sorted_np.sort_by(|a, b| {
                     let vol_a = cumulative_effective_sets.get(a).unwrap_or(&0.0);
                     let vol_b = cumulative_effective_sets.get(b).unwrap_or(&0.0);
-                    vol_a.partial_cmp(vol_b).unwrap()
+                    vol_a.total_cmp(vol_b)
                 });
                 for m in sorted_np {
                     if np_leftover == 0 {
@@ -500,6 +505,7 @@ fn build_sessions(
     available_eq: &[String],
     settings: &Settings,
     profile: &Profile,
+    mut unscheduled_volume: Option<&mut HashMap<Muscle, u32>>,
 ) -> Vec<Session> {
     let mut sessions = Vec::new();
     let mut stretched_covered: std::collections::HashSet<Muscle> = std::collections::HashSet::new();
@@ -663,6 +669,8 @@ fn build_sessions(
                             added_weight_kg: added_kg,
                         });
                     }
+                } else if let Some(ref mut unscheduled) = unscheduled_volume {
+                    *unscheduled.entry(chosen_muscle).or_insert(0) += sets_scheduled;
                 }
             }
         }
@@ -780,6 +788,7 @@ pub fn generate_plan(
             &available_eq,
             settings,
             profile,
+            None,
         );
 
         let exercises_map: HashMap<String, &Exercise> =
@@ -812,6 +821,7 @@ pub fn generate_plan(
         &indirect_received,
     );
 
+    let mut unscheduled_volume: HashMap<Muscle, u32> = HashMap::new();
     let sessions = build_sessions(
         &cycle,
         settings.sets_per_day,
@@ -820,7 +830,28 @@ pub fn generate_plan(
         &available_eq,
         settings,
         profile,
+        Some(&mut unscheduled_volume),
     );
+
+    let mut scheduling_alerts = Vec::new();
+    let mut sorted_unscheduled: Vec<(Muscle, u32)> = unscheduled_volume.into_iter().collect();
+    sorted_unscheduled.sort_by_key(|(m, _)| m.as_str());
+    for (muscle, count) in sorted_unscheduled {
+        if count > 0 {
+            let eq_hint = match muscle {
+                Muscle::Back | Muscle::Biceps => "pull-up bar or dumbbell",
+                Muscle::Chest | Muscle::Triceps => "parallettes, bed, or dumbbell",
+                Muscle::Forearms => "pull-up bar or dumbbell",
+                Muscle::Abs => "pull-up bar or floor mat",
+            };
+            scheduling_alerts.push(format!(
+                "{} planned sets for {} could not be scheduled: required equipment ({}) is disabled in Settings.",
+                count,
+                muscle.as_str().to_uppercase(),
+                eq_hint
+            ));
+        }
+    }
 
     let exercises_map: HashMap<String, &Exercise> =
         exercises.iter().map(|e| (e.id.clone(), e)).collect();
@@ -850,6 +881,7 @@ pub fn generate_plan(
         maintenance_dropped,
         is_deload: false,
         pre_deload_sessions: None,
+        scheduling_alerts,
     }
 }
 

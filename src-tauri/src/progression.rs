@@ -44,6 +44,23 @@ pub fn check_ready_to_progress(
                 || max_perf >= overflow_threshold))
 }
 
+/// Resolves the effective progression window for a block. Time-based blocks use
+/// their seconds window; rep blocks use their prescribed rep window (floored at 6)
+/// so weighted 8-12 blocks progress at 12 reps — the target the UI displays —
+/// instead of the default 8-15 window.
+pub fn targets_for_block(block: &Block, time_based: bool) -> (u32, u32) {
+    if time_based {
+        (
+            block.seconds_target_min.unwrap_or(20),
+            block.seconds_target_max.unwrap_or(60),
+        )
+    } else if block.rep_target_max > block.rep_target_min && block.rep_target_max >= 6 {
+        (block.rep_target_min.max(6), block.rep_target_max)
+    } else {
+        (6, 15)
+    }
+}
+
 /// Evaluates double progression for an exercise based on recent logged sets.
 /// Progression order:
 /// 1. More reps up to top of window (e.g. 15 or 20 reps).
@@ -57,11 +74,8 @@ pub fn evaluate_progression(
     exercise: &Exercise,
     recent_logs: &[SetLog],
     settings: &Settings,
+    all_exercises: &[Exercise],
 ) -> Option<ProgressionSuggestion> {
-    if recent_logs.is_empty() {
-        return None;
-    }
-
     let hard_sets: Vec<&SetLog> = recent_logs
         .iter()
         .filter(|l| l.exercise_id == exercise.id && l.reps_from_failure <= 3)
@@ -80,17 +94,7 @@ pub fn evaluate_progression(
         });
     }
 
-    let (min_target, top_target) = if exercise.time_based {
-        (
-            block.seconds_target_min.unwrap_or(20),
-            block.seconds_target_max.unwrap_or(60),
-        )
-    } else {
-        (
-            block.rep_target_min.max(6),
-            block.rep_target_max.max(15),
-        )
-    };
+    let (min_target, top_target) = targets_for_block(block, exercise.time_based);
     let unit_label = if exercise.time_based { "seconds" } else { "reps" };
 
     let hard_perfs: Vec<u32> = hard_sets.iter().map(|l| l.reps_or_seconds).collect();
@@ -109,7 +113,83 @@ pub fn evaluate_progression(
             ""
         };
 
-        if let Some(ref harder_id) = exercise.harder_id {
+        // Equipment-aware ladder resolution
+        let mut candidate_id = exercise.harder_id.clone();
+        let mut usable_harder_id: Option<String> = None;
+        while let Some(ref cid) = candidate_id {
+            if let Some(cand_ex) = all_exercises.iter().find(|e| &e.id == cid) {
+                let has_all_eq = cand_ex
+                    .equipment
+                    .iter()
+                    .all(|eq| eq == "none" || settings.has_equipment(eq));
+                if has_all_eq {
+                    usable_harder_id = Some(cid.clone());
+                    break;
+                } else {
+                    candidate_id = cand_ex.harder_id.clone();
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Equipment load option check
+        let is_pull = exercise.ladder == "pull" || exercise.ladder == "pull_biceps_branch";
+        let is_push = exercise.ladder == "push" || exercise.ladder == "triceps_bodyweight";
+        let vest_enabled = (settings.weight_vest || settings.enabled_equipment.contains(&"weight_vest".to_string())) && (is_pull || is_push);
+        let backpack_enabled = settings.backpack || settings.enabled_equipment.contains(&"backpack".to_string());
+
+        let next_external_load: Option<(f64, String)> = if vest_enabled && is_pull && block.added_weight_kg < 10.0 {
+            let label = if settings.units == Units::Imperial { "22 lb (10 kg)" } else { "10 kg" };
+            Some((10.0, format!("10kg weight vest (+{})", label)))
+        } else if backpack_enabled {
+            let next_weight = block.added_weight_kg + 1.5;
+            let bottle_cue = format_backpack_loading(next_weight, settings.units);
+            Some((next_weight, format!("backpack weight: {}", bottle_cue)))
+        } else if vest_enabled {
+            let next_weight = if block.added_weight_kg == 0.0 { 5.0 } else { block.added_weight_kg + 2.5 };
+            let label = if settings.units == Units::Imperial {
+                format!("{:.1} lb", next_weight * 2.20462)
+            } else {
+                format!("{:.1} kg", next_weight)
+            };
+            Some((next_weight, format!("weight vest (+{})", label)))
+        } else {
+            None
+        };
+
+        // Dual Track Progression: If both a harder variation/tempo and external load are available, offer both options
+        if let (Some(harder_id), Some((next_weight, load_label))) = (&usable_harder_id, &next_external_load) {
+            let (tempo_cue, bw_option_desc) = if !block.tempo_cue.contains("3-4s") && !exercise.time_based {
+                (
+                    Some(format!("Slow 3-4s lowering, 1s pause at bottom{}", partials_cue)),
+                    format!("intensified 3-4s tempo & pause on {}", exercise.name),
+                )
+            } else {
+                (
+                    Some("Controlled 2-3s negative".to_string()),
+                    format!("next ladder rung ({})", harder_id),
+                )
+            };
+
+            return Some(ProgressionSuggestion {
+                session_number,
+                block_index,
+                exercise_id: exercise.id.clone(),
+                action: "dual_progression".to_string(),
+                message: format!(
+                    "Top target achieved on {}! Choose your progression path: Add {} (Weighted Track) OR advance to {} (Bodyweight Track).",
+                    exercise.name,
+                    load_label,
+                    bw_option_desc
+                ),
+                new_added_weight_kg: Some(*next_weight),
+                next_exercise_id: Some(harder_id.clone()),
+                new_tempo_cue: tempo_cue,
+            });
+        }
+
+        if let Some(ref harder_id) = usable_harder_id {
             if exercise.time_based {
                 if !block.tempo_cue.contains("Focus on full-body tension") {
                     Some(ProgressionSuggestion {
@@ -212,15 +292,45 @@ pub fn evaluate_progression(
                 new_tempo_cue: None,
             })
         } else if exercise.time_based {
+            if block.tempo_cue.contains("Focus on full-body tension") {
+                Some(ProgressionSuggestion {
+                    session_number,
+                    block_index,
+                    exercise_id: exercise.id.clone(),
+                    action: "mastery_reached".to_string(),
+                    message: format!(
+                        "Mastery achieved on {} at top hold time and body tension! You have maxed this movement with your available equipment.",
+                        exercise.name
+                    ),
+                    new_added_weight_kg: None,
+                    next_exercise_id: None,
+                    new_tempo_cue: None,
+                })
+            } else {
+                Some(ProgressionSuggestion {
+                    session_number,
+                    block_index,
+                    exercise_id: exercise.id.clone(),
+                    action: "intensify_execution".to_string(),
+                    message: "Top hold time reached. Focus on full-body tension and active shoulder/core bracing.".to_string(),
+                    new_added_weight_kg: None,
+                    next_exercise_id: None,
+                    new_tempo_cue: Some("Focus on full-body tension and active shoulder/core bracing".to_string()),
+                })
+            }
+        } else if block.tempo_cue.contains("3-4s") {
             Some(ProgressionSuggestion {
                 session_number,
                 block_index,
                 exercise_id: exercise.id.clone(),
-                action: "intensify_execution".to_string(),
-                message: "Top hold time reached. Focus on full-body tension and active shoulder/core bracing.".to_string(),
+                action: "mastery_reached".to_string(),
+                message: format!(
+                    "Mastery achieved on {} at top tempo and reps! You have maxed this movement with your available equipment.",
+                    exercise.name
+                ),
                 new_added_weight_kg: None,
                 next_exercise_id: None,
-                new_tempo_cue: Some("Focus on full-body tension and active shoulder/core bracing".to_string()),
+                new_tempo_cue: None,
             })
         } else {
             // Execution intensifiers for exercises without harder variations (e.g. dumbbell exercises)
@@ -316,8 +426,8 @@ pub fn detect_stall_from_all_logs(exercise_id: &str, all_logs: &[SetLog]) -> boo
 
         if new_group {
             exposures.push(vec![log]);
-        } else {
-            exposures.last_mut().unwrap().push(log);
+        } else if let Some(last) = exposures.last_mut() {
+            last.push(log);
         }
     }
 
@@ -536,6 +646,7 @@ mod tests {
             maintenance_dropped: false,
             is_deload: false,
             pre_deload_sessions: None,
+            scheduling_alerts: Vec::new(),
         };
 
         let deloaded = apply_deload(&plan);
@@ -581,6 +692,7 @@ mod tests {
                 reps_or_seconds: 15,
                 added_weight_kg: 0.0,
                 reps_from_failure: 1,
+                session_id: None,
             },
             SetLog {
                 timestamp: 2,
@@ -590,10 +702,12 @@ mod tests {
                 reps_or_seconds: 15,
                 added_weight_kg: 0.0,
                 reps_from_failure: 1,
+                session_id: None,
             },
         ];
         let settings = Settings::default();
-        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings);
+        let all_exercises = crate::load_embedded_exercises();
+        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings, &all_exercises);
         assert!(suggestion.is_some());
         let s = suggestion.unwrap();
         assert_eq!(s.session_number, 1);
@@ -641,6 +755,7 @@ mod tests {
                 reps_or_seconds: 15,
                 added_weight_kg: 0.0,
                 reps_from_failure: 1,
+                session_id: None,
             },
             SetLog {
                 timestamp: 2,
@@ -650,14 +765,16 @@ mod tests {
                 reps_or_seconds: 15,
                 added_weight_kg: 0.0,
                 reps_from_failure: 1,
+                session_id: None,
             },
         ];
         let settings = Settings {
             weight_vest: true,
             ..Default::default()
         };
+        let all_exercises = crate::load_embedded_exercises();
 
-        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings);
+        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings, &all_exercises);
         assert!(suggestion.is_some());
         let s = suggestion.unwrap();
         assert_eq!(s.action, "add_weight_vest");
@@ -703,6 +820,7 @@ mod tests {
                 reps_or_seconds: 15,
                 added_weight_kg: 0.0,
                 reps_from_failure: 1,
+                session_id: None,
             },
             SetLog {
                 timestamp: 2,
@@ -712,6 +830,7 @@ mod tests {
                 reps_or_seconds: 15,
                 added_weight_kg: 0.0,
                 reps_from_failure: 1,
+                session_id: None,
             },
         ];
         let settings = Settings {
@@ -720,9 +839,129 @@ mod tests {
             ..Default::default()
         };
 
-        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings);
+        let all_exercises = crate::load_embedded_exercises();
+        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings, &all_exercises);
         assert!(suggestion.is_some());
         let s = suggestion.unwrap();
         assert_ne!(s.action, "add_weight_vest", "Weight vest must NEVER be suggested on push exercises");
+    }
+
+    #[test]
+    fn test_progression_skips_unowned_parallettes() {
+        let all_exercises = crate::load_embedded_exercises();
+        let feet_el = all_exercises.iter().find(|e| e.id == "feet_elevated_push_up").unwrap();
+        let block = Block {
+            exercise_id: feet_el.id.clone(),
+            sets: 2,
+            rep_target_min: 8,
+            rep_target_max: 15,
+            seconds_target_min: None,
+            seconds_target_max: None,
+            effort_target: "0-3 reps".to_string(),
+            tempo_cue: "Slow 3-4s lowering, 1s pause at bottom".to_string(),
+            rest_cue: "2m".to_string(),
+            added_weight_kg: 0.0,
+        };
+        let logs = vec![
+            SetLog {
+                timestamp: 1,
+                session_number: 1,
+                block_index: 0,
+                exercise_id: feet_el.id.clone(),
+                reps_or_seconds: 15,
+                added_weight_kg: 0.0,
+                reps_from_failure: 1,
+                session_id: None,
+            },
+            SetLog {
+                timestamp: 2,
+                session_number: 1,
+                block_index: 0,
+                exercise_id: feet_el.id.clone(),
+                reps_or_seconds: 15,
+                added_weight_kg: 0.0,
+                reps_from_failure: 1,
+                session_id: None,
+            },
+        ];
+        // Settings WITHOUT parallettes
+        let settings = Settings {
+            enabled_equipment: vec!["bed".to_string()],
+            ..Default::default()
+        };
+
+        let suggestion = evaluate_progression(1, 0, &block, feet_el, &logs, &settings, &all_exercises);
+        assert!(suggestion.is_some());
+        let s = suggestion.unwrap();
+        // Should bypass deep_parallette_push_up and advance to archer_push_up
+        assert_eq!(s.next_exercise_id, Some("archer_push_up".to_string()));
+    }
+
+    #[test]
+    fn test_dual_progression_weighted_and_variation_choice() {
+        let block = Block {
+            exercise_id: "pull_up".to_string(),
+            sets: 3,
+            rep_target_min: 8,
+            rep_target_max: 12,
+            seconds_target_min: None,
+            seconds_target_max: None,
+            effort_target: "0-3 reps".to_string(),
+            tempo_cue: "Controlled 2-3s negative".to_string(),
+            rest_cue: "2:30".to_string(),
+            added_weight_kg: 0.0,
+        };
+        let exercise = Exercise {
+            id: "pull_up".to_string(),
+            name: "Pull-up".to_string(),
+            primary_muscle: Muscle::Back,
+            contribution_weights: crate::models::MuscleWeights::default(),
+            equipment: vec!["pull_bar".to_string()],
+            ladder: "pull".to_string(),
+            rung: 3,
+            easier_id: Some("jump_assisted_pull_up".to_string()),
+            harder_id: Some("pause_pull_up".to_string()),
+            bw_fraction: Some(0.93),
+            bw_anchors: None,
+            time_based: false,
+            stretched_position: true,
+            cues: "cues".to_string(),
+        };
+        let logs = vec![
+            SetLog {
+                timestamp: 1,
+                session_number: 1,
+                block_index: 0,
+                exercise_id: "pull_up".to_string(),
+                reps_or_seconds: 14,
+                added_weight_kg: 0.0,
+                reps_from_failure: 1,
+                session_id: None,
+            },
+            SetLog {
+                timestamp: 2,
+                session_number: 1,
+                block_index: 0,
+                exercise_id: "pull_up".to_string(),
+                reps_or_seconds: 13,
+                added_weight_kg: 0.0,
+                reps_from_failure: 1,
+                session_id: None,
+            },
+        ];
+        // Settings WITH weight vest enabled
+        let settings = Settings {
+            weight_vest: true,
+            ..Default::default()
+        };
+        let all_exercises = crate::load_embedded_exercises();
+
+        let suggestion = evaluate_progression(1, 0, &block, &exercise, &logs, &settings, &all_exercises);
+        assert!(suggestion.is_some());
+        let s = suggestion.unwrap();
+        // Verifies dual progression is returned with both options populated
+        assert_eq!(s.action, "dual_progression");
+        assert_eq!(s.new_added_weight_kg, Some(10.0));
+        assert_eq!(s.next_exercise_id, Some("pause_pull_up".to_string()));
     }
 }

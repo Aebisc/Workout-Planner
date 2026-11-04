@@ -20,7 +20,15 @@ pub fn effective_sets_per_cycle(
             if let Some(exercise) = exercises_map.get(&block.exercise_id) {
                 let sets = block.sets as f64;
                 for muscle in Muscle::ALL {
-                    let weight = exercise.contribution_weights.get(muscle);
+                    // Direct sets always count as a full effective set for the primary
+                    // muscle (matching the scheduler's cumulative accounting and the
+                    // dashboards), even when the exercise's own contribution weight is
+                    // below 1.0 (e.g. dumbbell pullover).
+                    let weight = if exercise.primary_muscle == muscle {
+                        1.0
+                    } else {
+                        exercise.contribution_weights.get(muscle)
+                    };
                     if weight > 0.0 {
                         let current = totals.entry(muscle).or_insert(0.0);
                         *current += sets * weight;
@@ -76,10 +84,28 @@ pub fn evaluate_plan_warnings(
         1.0
     };
 
-    let loss_threshold = 1.0 * factor;
-    let maint_threshold = 5.0 * factor;
-    let small_growth_threshold = 10.0 * factor;
-    let diminishing_threshold = 20.0 * factor;
+    // Tier boundaries come from the embedded warning_tiers.json so the config
+    // file stays the single source of truth; hardcoded values are only fallbacks.
+    let tier_max = |level: &str| -> Option<f64> {
+        tiers_data
+            .experienced
+            .iter()
+            .find(|t| t.level == level)
+            .and_then(|t| t.max)
+    };
+    let tier_min = |level: &str| -> Option<f64> {
+        tiers_data
+            .experienced
+            .iter()
+            .find(|t| t.level == level)
+            .map(|t| t.min)
+    };
+
+    let loss_threshold = tier_max("muscle_loss").unwrap_or(1.0) * factor;
+    let maint_threshold = tier_max("maintenance").unwrap_or(5.0) * factor;
+    let small_growth_threshold = tier_max("small_growth").unwrap_or(10.0) * factor;
+    let diminishing_threshold = tier_min("diminishing_returns").unwrap_or(20.0) * factor;
+    let diluted_threshold = tiers_data.rules.diluted_plan_threshold * factor;
 
     // Check each muscle's weekly volume tier
     for muscle in Muscle::ALL {
@@ -174,11 +200,12 @@ pub fn evaluate_plan_warnings(
         }
     }
 
-    // Check diluted plan: if chosen priority muscles each get under 10 weekly effective sets
+    // Check diluted plan: if chosen priority muscles each get under the diluted threshold
+    // of weekly effective sets
     if !plan.is_deload && settings.priority_muscles.len() > 1 {
         let all_priority_under_optimal = settings.priority_muscles.iter().all(|m| {
             let sets = weekly.get(m).copied().unwrap_or(0.0);
-            sets < small_growth_threshold
+            sets < diluted_threshold
         });
         if all_priority_under_optimal {
             warnings.push(Warning {
@@ -236,17 +263,8 @@ pub fn evaluate_stall_warnings(
         for block in &session.blocks {
             if checked_exercises.insert(&block.exercise_id) {
                 if let Some(ex) = exercises_map.get(&block.exercise_id) {
-                    let (min_target, top_target) = if ex.time_based {
-                        (
-                            block.seconds_target_min.unwrap_or(20),
-                            block.seconds_target_max.unwrap_or(60),
-                        )
-                    } else {
-                        (
-                            block.rep_target_min.max(6),
-                            block.rep_target_max.max(15),
-                        )
-                    };
+                    let (min_target, top_target) =
+                        crate::progression::targets_for_block(block, ex.time_based);
 
                     let mut ex_logs: Vec<&SetLog> = all_logs
                         .iter()
@@ -370,6 +388,7 @@ mod tests {
             maintenance_dropped: false,
             is_deload: false,
             pre_deload_sessions: None,
+            scheduling_alerts: Vec::new(),
         };
 
         let tiers = WarningTiersData {
@@ -431,6 +450,7 @@ mod tests {
             maintenance_dropped: false,
             is_deload: false,
             pre_deload_sessions: None,
+            scheduling_alerts: Vec::new(),
         };
 
         let tiers = WarningTiersData {

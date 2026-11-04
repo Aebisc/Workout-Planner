@@ -1,8 +1,8 @@
 use crate::calibration::calibrate_initial_profile;
 use crate::models::{
     CalibrationAnswers, CompleteSessionResponse, CompletedSession, Exercise, FullBackupPayload,
-    LanSyncStatus, Plan, Profile, ProgressionSuggestion, Session, SessionExerciseSummary, SetLog,
-    Settings, Warning,
+    LanSyncStatus, Muscle, Plan, Profile, ProgressionSuggestion, Session, SessionExerciseSummary, SetLog,
+    Settings, Units, Warning,
 };
 use crate::progression::{evaluate_progression, update_profile_from_set};
 use crate::scheduler::generate_plan as sched_generate_plan;
@@ -30,24 +30,70 @@ pub fn get_settings(app: tauri::AppHandle) -> Result<Settings, String> {
 #[tauri::command]
 pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<Plan, String> {
     let storage = get_storage(&app)?;
+    let old_settings = storage.load_settings().unwrap_or_default();
     storage.save_settings(&settings)?;
+
+    let existing_plan = storage.load_plan()?;
+
+    let structural_changed = old_settings.days_per_week != settings.days_per_week
+        || old_settings.sets_per_day != settings.sets_per_day
+        || old_settings.priority_muscles != settings.priority_muscles
+        || old_settings.enabled_equipment != settings.enabled_equipment
+        || old_settings.maintenance_on != settings.maintenance_on
+        || old_settings.backpack != settings.backpack
+        || old_settings.weight_vest != settings.weight_vest
+        || existing_plan.is_none();
+
+    if !structural_changed {
+        if let Some(plan) = existing_plan {
+            return Ok(plan);
+        }
+    }
 
     let profile = storage.load_profile()?;
     let exercises = load_embedded_exercises();
 
-    let existing_plan = storage.load_plan()?;
-    let (deficits, cumulative) = match existing_plan {
-        Some(p) => (p.maintenance_deficits, p.cumulative_effective_sets),
+    let (deficits, cumulative) = match &existing_plan {
+        Some(p) => (p.maintenance_deficits.clone(), p.cumulative_effective_sets.clone()),
         None => (HashMap::new(), HashMap::new()),
     };
 
-    let plan = sched_generate_plan(
+    let mut regenerated = sched_generate_plan(
         &settings,
         &profile,
         &exercises,
         deficits,
         cumulative,
     );
+
+    // If existing plan had custom swaps or progressions, carry them over where session numbers and muscle targets match
+    if let Some(ref old_plan) = existing_plan {
+        for old_sess in &old_plan.sessions {
+            if let Some(new_sess) = regenerated.sessions.iter_mut().find(|s| s.session_number == old_sess.session_number) {
+                for (b_idx, old_blk) in old_sess.blocks.iter().enumerate() {
+                    if let Some(new_blk) = new_sess.blocks.get_mut(b_idx) {
+                        if let (Some(old_ex), Some(new_ex)) = (
+                            exercises.iter().find(|e| e.id == old_blk.exercise_id),
+                            exercises.iter().find(|e| e.id == new_blk.exercise_id)
+                        ) {
+                            if old_ex.primary_muscle == new_ex.primary_muscle && settings.has_equipment(&old_ex.equipment[0]) {
+                                new_blk.exercise_id = old_blk.exercise_id.clone();
+                                new_blk.tempo_cue = old_blk.tempo_cue.clone();
+                                new_blk.added_weight_kg = old_blk.added_weight_kg;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Saving settings must not silently cancel an active deload cycle.
+    let plan = if existing_plan.as_ref().map(|p| p.is_deload).unwrap_or(false) {
+        crate::progression::apply_deload(&regenerated)
+    } else {
+        regenerated
+    };
     storage.save_plan(&plan)?;
     Ok(plan)
 }
@@ -56,6 +102,13 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<Plan
 pub fn get_profile(app: tauri::AppHandle) -> Result<Profile, String> {
     let storage = get_storage(&app)?;
     storage.load_profile()
+}
+
+#[tauri::command]
+pub fn update_profile(app: tauri::AppHandle, profile: Profile) -> Result<Profile, String> {
+    let storage = get_storage(&app)?;
+    storage.save_profile(&profile)?;
+    Ok(profile)
 }
 
 #[tauri::command]
@@ -133,6 +186,7 @@ pub fn swap_exercise(
     session_number: u32,
     block_index: usize,
     new_exercise_id: String,
+    added_weight_kg: Option<f64>,
 ) -> Result<Session, String> {
     let storage = get_storage(&app)?;
     let mut plan = storage
@@ -192,6 +246,14 @@ pub fn swap_exercise(
         ));
     }
 
+    let target_added_weight = added_weight_kg.unwrap_or(0.0);
+    if target_added_weight > 0.0 {
+        let is_vest = settings.weight_vest || settings.enabled_equipment.contains(&"weight_vest".to_string());
+        if !is_vest {
+            return Err("Cannot swap to weighted variant: Weight vest is not enabled in settings".to_string());
+        }
+    }
+
     // 3. Mutate session block with unified cues and maintain block set count
     let mutate_session_block = |sess: &mut Session| -> Result<(), String> {
         let block = sess
@@ -200,8 +262,13 @@ pub fn swap_exercise(
             .ok_or_else(|| format!("Block index {} not found in session {}", block_index, sess.session_number))?;
 
         block.exercise_id = new_ex.id.clone();
-        block.added_weight_kg = 0.0;
-        block.tempo_cue = "Controlled 2-3s negative".to_string();
+        block.added_weight_kg = target_added_weight;
+        if target_added_weight >= 10.0 {
+            let vest_str = if settings.units == Units::Imperial { "22 lb" } else { "10kg" };
+            block.tempo_cue = format!("Controlled 2-3s negative with {} vest", vest_str);
+        } else {
+            block.tempo_cue = "Controlled 2-3s negative".to_string();
+        }
         if new_ex.time_based {
             block.rep_target_min = 0;
             block.rep_target_max = 0;
@@ -253,55 +320,6 @@ pub fn swap_exercise(
 }
 
 
-
-#[tauri::command]
-pub fn log_set(
-    app: tauri::AppHandle,
-    log: SetLog,
-) -> Result<Option<ProgressionSuggestion>, String> {
-    let storage = get_storage(&app)?;
-    storage.append_set_log(&log)?;
-
-    let mut profile = storage.load_profile()?;
-    update_profile_from_set(&mut profile, &log);
-    storage.save_profile(&profile)?;
-
-    let settings = storage.load_settings()?;
-    let exercises = load_embedded_exercises();
-    let exercise = exercises.iter().find(|e| e.id == log.exercise_id);
-
-    let plan = storage.load_plan()?;
-    let block = plan.as_ref().and_then(|p| {
-        p.sessions
-            .iter()
-            .find(|s| s.session_number == log.session_number)
-            .and_then(|s| s.blocks.get(log.block_index))
-    });
-
-    if let (Some(ex), Some(blk)) = (exercise, block) {
-        let all_logs = storage.load_set_logs()?;
-        let recent_exercise_logs: Vec<SetLog> = all_logs
-            .into_iter()
-            .filter(|l| {
-                l.exercise_id == log.exercise_id
-                    && l.session_number == log.session_number
-                    && l.block_index == log.block_index
-            })
-            .collect();
-
-        let suggestion = evaluate_progression(
-            log.session_number,
-            log.block_index,
-            blk,
-            ex,
-            &recent_exercise_logs,
-            &settings,
-        );
-        Ok(suggestion)
-    } else {
-        Ok(None)
-    }
-}
 
 #[tauri::command]
 pub fn get_warnings(app: tauri::AppHandle) -> Result<Vec<Warning>, String> {
@@ -468,12 +486,36 @@ pub fn complete_session(
     let mut profile = storage.load_profile()?;
     let settings = storage.load_settings()?;
     let exercises = load_embedded_exercises();
-    let plan = storage.load_plan()?;
+    let mut plan = storage.load_plan()?;
     let mut suggestions = Vec::new();
 
     for set in &sets {
         storage.append_set_log(set)?;
         update_profile_from_set(&mut profile, set);
+    }
+
+    // Real-time accumulation of effective volume and maintenance deficit clearance
+    if let Some(ref mut p) = plan {
+        for set in &sets {
+            if let Some(ex) = exercises.iter().find(|e| e.id == set.exercise_id) {
+                for m in Muscle::ALL {
+                    let weight = if ex.primary_muscle == m {
+                        1.0
+                    } else {
+                        ex.contribution_weights.get(m)
+                    };
+                    if weight > 0.0 {
+                        *p.cumulative_effective_sets.entry(m).or_insert(0.0) += weight;
+                        if ex.primary_muscle == m {
+                            if let Some(def) = p.maintenance_deficits.get_mut(&m) {
+                                *def = (*def - weight).max(0.0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        storage.save_plan(p)?;
     }
 
     let all_logs = storage.load_set_logs()?;
@@ -485,11 +527,20 @@ pub fn complete_session(
         }
 
         let exercise = exercises.iter().find(|e| e.id == set.exercise_id);
+        // Blocks can be re-sorted (exercise swaps / progression advances) after a set was
+        // logged, so the block index alone is not trustworthy: prefer the block at the
+        // logged index only if it still matches the logged exercise, else locate the
+        // block by exercise id within the same session.
         let block = plan.as_ref().and_then(|p| {
             p.sessions
                 .iter()
                 .find(|s| s.session_number == set.session_number)
-                .and_then(|s| s.blocks.get(set.block_index))
+                .and_then(|s| {
+                    s.blocks
+                        .get(set.block_index)
+                        .filter(|b| b.exercise_id == set.exercise_id)
+                        .or_else(|| s.blocks.iter().find(|b| b.exercise_id == set.exercise_id))
+                })
         });
 
         if let (Some(ex), Some(blk)) = (exercise, block) {
@@ -499,16 +550,22 @@ pub fn complete_session(
                 .cloned()
                 .collect();
 
-            let mut block_suggestion = evaluate_progression(
-                session.session_number,
-                set.block_index,
-                blk,
-                ex,
-                &current_block_sets,
-                &settings,
-            );
-
             let is_deload = plan.as_ref().map(|p| p.is_deload).unwrap_or(false);
+
+            let mut block_suggestion = if is_deload {
+                None
+            } else {
+                evaluate_progression(
+                    session.session_number,
+                    set.block_index,
+                    blk,
+                    ex,
+                    &current_block_sets,
+                    &settings,
+                    &exercises,
+                )
+            };
+
             let is_below_top_target = block_suggestion
                 .as_ref()
                 .map(|s| s.action == "add_reps")
@@ -572,13 +629,17 @@ pub fn get_session_history(app: tauri::AppHandle) -> Result<Vec<CompletedSession
             set_logs.sort_by_key(|l| l.timestamp);
             let exercises = load_embedded_exercises();
 
-            // Cluster sets into individual workout sessions by session_number and 12-hour window
+            // Cluster sets into individual workout sessions by explicit session_id first, else fallback to session_number and 12-hour window
             let mut session_clusters: Vec<Vec<SetLog>> = Vec::new();
             for log in set_logs {
                 let found_cluster = session_clusters.iter_mut().find(|cluster| {
                     if let Some(first) = cluster.first() {
-                        first.session_number == log.session_number
-                            && (log.timestamp - first.timestamp).abs() < 43_200_000
+                        if let (Some(id_a), Some(id_b)) = (&first.session_id, &log.session_id) {
+                            id_a == id_b
+                        } else {
+                            first.session_number == log.session_number
+                                && (log.timestamp - first.timestamp).abs() < 43_200_000
+                        }
                     } else {
                         false
                     }
@@ -624,8 +685,12 @@ pub fn get_session_history(app: tauri::AppHandle) -> Result<Vec<CompletedSession
                         avg_rir,
                     });
                 }
+                let sess_id = s_logs
+                    .first()
+                    .and_then(|l| l.session_id.clone())
+                    .unwrap_or_else(|| format!("legacy-{}-{}", sess_num, earliest_ts));
                 history.push(CompletedSession {
-                    id: format!("legacy-{}-{}", sess_num, earliest_ts),
+                    id: sess_id,
                     timestamp: earliest_ts,
                     session_number: sess_num,
                     focus,
@@ -773,8 +838,43 @@ pub fn import_full_backup(
         );
         storage.save_plan(&generated)?;
     }
-    storage.save_set_logs(&payload.set_logs)?;
-    storage.save_session_history(&payload.session_history)?;
+    // Non-destructive union merge of set_logs: deduplicate by session_id/block/exercise or timestamp
+    let mut merged_logs = storage.load_set_logs().unwrap_or_default();
+    for imported_log in &payload.set_logs {
+        let duplicate = merged_logs.iter().any(|existing| {
+            if let (Some(id_a), Some(id_b)) = (&existing.session_id, &imported_log.session_id) {
+                id_a == id_b
+                    && existing.block_index == imported_log.block_index
+                    && existing.exercise_id == imported_log.exercise_id
+                    && existing.reps_or_seconds == imported_log.reps_or_seconds
+            } else {
+                existing.timestamp == imported_log.timestamp
+                    && existing.exercise_id == imported_log.exercise_id
+                    && existing.block_index == imported_log.block_index
+            }
+        });
+        if !duplicate {
+            merged_logs.push(imported_log.clone());
+        }
+    }
+    merged_logs.sort_by_key(|l| l.timestamp);
+    storage.save_set_logs(&merged_logs)?;
+
+    // Non-destructive union merge of session_history: deduplicate by id or close timestamp
+    let mut merged_history = storage.load_session_history().unwrap_or_default();
+    for imported_sess in &payload.session_history {
+        let duplicate = merged_history.iter().any(|existing| {
+            existing.id == imported_sess.id
+                || (existing.session_number == imported_sess.session_number
+                    && (existing.timestamp - imported_sess.timestamp).abs() < 60_000)
+        });
+        if !duplicate {
+            merged_history.push(imported_sess.clone());
+        }
+    }
+    merged_history.sort_by_key(|s| s.timestamp);
+    storage.save_session_history(&merged_history)?;
+
     Ok(payload)
 }
 
@@ -838,13 +938,13 @@ pub fn start_lan_sync_server(
     let ip = detect_local_ip();
     let port = 7878;
     let pin = format!(
-        "{:04}",
+        "{:06}",
         (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos())
-            .unwrap_or(1234)
-            % 9000)
-            + 1000
+            .unwrap_or(123456)
+            % 900_000)
+            + 100_000
     );
 
     let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))
@@ -876,7 +976,12 @@ pub fn start_lan_sync_server(
             }
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // Accepted sockets can inherit the listener's non-blocking mode (Windows),
+                    // which makes read timeouts ineffective; force blocking so the 5s timeout
+                    // applies and stalled clients cannot spin the read loop forever.
+                    let _ = stream.set_nonblocking(false);
                     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                    let request_started = std::time::Instant::now();
                     let mut buf = vec![0u8; 8192];
                     let mut total_read = 0usize;
                     let mut header_end = None;
@@ -912,7 +1017,13 @@ pub fn start_lan_sync_server(
                                     }
                                 }
                             }
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            Err(ref e)
+                                if e.kind() == std::io::ErrorKind::WouldBlock
+                                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                            {
+                                if request_started.elapsed() > std::time::Duration::from_secs(10) {
+                                    break;
+                                }
                                 std::thread::sleep(std::time::Duration::from_millis(10));
                                 continue;
                             }
@@ -938,6 +1049,8 @@ pub fn start_lan_sync_server(
                     let pin_ok = path.contains(&format!("pin={}", expected_pin));
 
                     if !pin_ok {
+                        // Rate-limit guessing of the numeric PIN.
+                        std::thread::sleep(std::time::Duration::from_secs(1));
                         let body = r#"{"error":"Invalid PIN"}"#;
                         let resp = format!(
                             "HTTP/1.1 403 Forbidden\r\n{}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
@@ -1039,5 +1152,116 @@ pub fn get_lan_client_meta() -> Result<Option<serde_json::Value>, String> {
     let state_arc = get_lan_state();
     let st = state_arc.lock().unwrap();
     Ok(st.client_meta.clone())
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct RestTimerStatus {
+    pub is_active: bool,
+    pub target_epoch_millis: i64,
+    pub last_action: Option<String>,
+}
+
+#[tauri::command]
+pub fn start_rest_timer_notification(
+    _app: tauri::AppHandle,
+    title: String,
+    text: String,
+    target_epoch_millis: i64,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        if let Some(state) = _app.try_state::<crate::RestTimerHandle>() {
+            state
+                .0
+                .run_mobile_plugin::<()>(
+                    "startRestTimer",
+                    serde_json::json!({
+                        "title": title,
+                        "text": text,
+                        "targetEpochMillis": target_epoch_millis
+                    }),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    let _ = (_app, title, text, target_epoch_millis);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_rest_timer_notification(
+    _app: tauri::AppHandle,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        if let Some(state) = _app.try_state::<crate::RestTimerHandle>() {
+            state
+                .0
+                .run_mobile_plugin::<()>("cancelRestTimer", serde_json::json!({}))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    let _ = _app;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn adjust_rest_timer_notification(
+    _app: tauri::AppHandle,
+    target_epoch_millis: i64,
+    text: Option<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        if let Some(state) = _app.try_state::<crate::RestTimerHandle>() {
+            state
+                .0
+                .run_mobile_plugin::<()>(
+                    "adjustRestTimer",
+                    serde_json::json!({
+                        "targetEpochMillis": target_epoch_millis,
+                        "text": text
+                    }),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    let _ = (_app, target_epoch_millis, text);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_rest_timer_status(
+    _app: tauri::AppHandle,
+) -> Result<RestTimerStatus, String> {
+    #[cfg(target_os = "android")]
+    {
+        if let Some(state) = _app.try_state::<crate::RestTimerHandle>() {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct MobileTimerStatus {
+                is_active: bool,
+                target_epoch_millis: i64,
+                last_action: Option<String>,
+            }
+
+            if let Ok(res) = state.0.run_mobile_plugin::<MobileTimerStatus>(
+                "getRestTimerStatus",
+                serde_json::json!({}),
+            ) {
+                return Ok(RestTimerStatus {
+                    is_active: res.is_active,
+                    target_epoch_millis: res.target_epoch_millis,
+                    last_action: res.last_action,
+                });
+            }
+        }
+    }
+    let _ = _app;
+    Ok(RestTimerStatus {
+        is_active: false,
+        target_epoch_millis: 0,
+        last_action: None,
+    })
 }
 

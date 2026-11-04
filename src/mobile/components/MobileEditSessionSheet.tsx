@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../api';
 import { CompletedSession, Exercise, Plan, SessionExerciseSummary, SetLog, Units } from '../../types';
 import { toLocalDateKey } from '../../utils/cycle';
@@ -41,6 +41,9 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
   const [sessionNum, setSessionNum] = useState<number>(1);
   const [exerciseForms, setExerciseForms] = useState<ExerciseFormItem[]>([]);
   const [exercisesMap, setExercisesMap] = useState<Record<string, Exercise>>({});
+  // Ref mirror so the async exercise load never re-triggers form initialization
+  // (which would wipe in-progress user edits).
+  const exercisesMapRef = useRef<Record<string, Exercise>>({});
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -56,6 +59,7 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
         list.forEach((e) => {
           map[e.id] = e;
         });
+        exercisesMapRef.current = map;
         setExercisesMap(map);
       })
       .catch(console.error);
@@ -145,7 +149,7 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
       const targetSession = plan.sessions.find((s) => s.session_number === initialSessionNumber);
       if (targetSession) {
         const forms: ExerciseFormItem[] = targetSession.blocks.map((b) => {
-          const ex = exercisesMap[b.exercise_id];
+          const ex = exercisesMapRef.current[b.exercise_id];
           return {
             exercise_id: b.exercise_id,
             exercise_name: ex?.name || b.exercise_id.replace(/_/g, ' '),
@@ -159,7 +163,7 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
         setExerciseForms(forms);
       }
     }
-  }, [isOpen, sessionToEdit, initialDate, initialSessionNumber, plan, exercisesMap]);
+  }, [isOpen, sessionToEdit, initialDate, initialSessionNumber, plan]);
 
   if (!isOpen) return null;
 
@@ -212,7 +216,12 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
     setSaving(true);
 
     const [y, m, d] = (workoutDate || toLocalDateKey(new Date())).split('-').map(Number);
-    const dateTimestamp = new Date(y, (m || 1) - 1, d || 1, 12, 0, 0).getTime();
+    // Keep the original time-of-day when the date is unchanged; only backfilled
+    // or re-dated workouts are stamped at noon of the chosen day.
+    const dateTimestamp =
+      sessionToEdit && toLocalDateKey(new Date(sessionToEdit.timestamp)) === workoutDate
+        ? sessionToEdit.timestamp
+        : new Date(y, (m || 1) - 1, d || 1, 12, 0, 0).getTime();
 
     // Reconstruct exercises summary and SetLog flat list
     const reconstructedSets: SetLog[] = [];
@@ -258,11 +267,10 @@ export const MobileEditSessionSheet: React.FC<MobileEditSessionSheetProps> = ({
     };
 
     try {
-      if (sessionToEdit) {
-        await api.updateCompletedSession(targetCompletedSession, reconstructedSets);
-      } else {
-        await api.completeSession(targetCompletedSession, reconstructedSets);
-      }
+      // updateCompletedSession handles both edits and inserts; it also replaces
+      // an existing same-number workout within 12h instead of duplicating it
+      // (matching the desktop edit flow).
+      await api.updateCompletedSession(targetCompletedSession, reconstructedSets);
       onSaved();
       onClose();
     } catch (err) {

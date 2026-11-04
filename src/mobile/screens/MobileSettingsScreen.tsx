@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api } from '../../api';
-import { ExperienceLevel, Muscle, Settings, Units } from '../../types';
-import { toDisplayHeight, toMetricHeight, CM_TO_IN } from '../../utils/units';
+import { ExperienceLevel, Muscle, Profile, Settings, Units } from '../../types';
 import { BottomSheet } from '../components/BottomSheet';
 import { MobileNumberPicker } from '../components/MobileNumberPicker';
 import {
@@ -42,10 +41,17 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
   const [weightVest, setWeightVest] = useState<boolean>(
     initialSettings.weight_vest || initialSettings.enabled_equipment?.includes('weight_vest') || false
   );
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [bodyWeightInput, setBodyWeightInput] = useState<string>('75.0');
+
+  useEffect(() => {
+    api.getProfile().then((p) => {
+      setProfile(p);
+      const val = units === 'imperial' ? ((p.body_weight_kg || 75.0) * 2.20462).toFixed(1) : (p.body_weight_kg || 75.0).toFixed(1);
+      setBodyWeightInput(val);
+    }).catch(console.error);
+  }, []);
   const [showEquipmentSheet, setShowEquipmentSheet] = useState<boolean>(false);
-  const [bedHeightDisplay, setBedHeightDisplay] = useState<number>(
-    toDisplayHeight(initialSettings.bed_height_cm, initialSettings.units)
-  );
   const [priorityMuscles, setPriorityMuscles] = useState<Muscle[]>(
     initialSettings.priority_muscles
   );
@@ -108,12 +114,14 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
 
   const handleUnitsChange = (newUnits: Units) => {
     if (newUnits !== units) {
-      if (newUnits === 'imperial') {
-        setBedHeightDisplay(Math.round(bedHeightDisplay * CM_TO_IN));
-      } else {
-        setBedHeightDisplay(Math.round(bedHeightDisplay / CM_TO_IN));
-      }
       setUnits(newUnits);
+      const currentKg = units === 'imperial'
+        ? (parseFloat(bodyWeightInput) || 165.3) / 2.20462
+        : (parseFloat(bodyWeightInput) || 75.0);
+      const converted = newUnits === 'imperial'
+        ? (currentKg * 2.20462).toFixed(1)
+        : currentKg.toFixed(1);
+      setBodyWeightInput(converted);
     }
   };
 
@@ -147,7 +155,7 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
     const updated: Settings = {
       units,
       backpack,
-      bed_height_cm: toMetricHeight(bedHeightDisplay, units),
+      bed_height_cm: 35.0,
       priority_muscles: priorityMuscles,
       maintenance_on: maintenanceOn,
       experience,
@@ -161,6 +169,11 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
 
     try {
       await api.updateSettings(updated);
+      const parsedBw = parseFloat(bodyWeightInput);
+      const weightKg = units === 'imperial' ? (parsedBw ? parsedBw / 2.20462 : 75.0) : (parsedBw || 75.0);
+      if (profile) {
+        await api.updateProfile({ ...profile, body_weight_kg: weightKg }).catch(console.error);
+      }
       onSaved(updated);
       setStatusMessage('Settings saved successfully!');
       setTimeout(() => setStatusMessage(null), 3000);
@@ -218,6 +231,41 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
               >
                 Imperial
               </button>
+            </div>
+          </div>
+
+          {/* Body Weight */}
+          <div className="m-list-row">
+            <div className="m-row-left">
+              <span className="m-row-icon">⚖️</span>
+              <div>
+                <div className="m-row-label">Body Weight</div>
+                <div className="m-row-sublabel">Biomechanical resistance basis</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <input
+                type="number"
+                step="0.5"
+                min="30"
+                max="300"
+                value={bodyWeightInput}
+                onChange={(e) => setBodyWeightInput(e.target.value)}
+                style={{
+                  width: '74px',
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid var(--m-border)',
+                  color: '#fff',
+                  borderRadius: '6px',
+                  padding: '0.35rem 0.5rem',
+                  fontSize: '0.85rem',
+                  fontWeight: 700,
+                  textAlign: 'right',
+                }}
+              />
+              <span style={{ fontSize: '0.8rem', color: 'var(--m-text-muted)', fontWeight: 600 }}>
+                {units === 'imperial' ? 'lb' : 'kg'}
+              </span>
             </div>
           </div>
 
@@ -280,27 +328,6 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
               </div>
             </div>
             <span className="m-row-chevron">›</span>
-          </div>
-
-          {/* Bed / Incline Height */}
-          <div className="m-list-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-            <div className="m-row-left" style={{ marginBottom: '0.5rem' }}>
-              <span className="m-row-icon">📐</span>
-              <div>
-                <div className="m-row-label">Bed / Elevation Height</div>
-                <div className="m-row-sublabel">For feet-elevated and incline leverage</div>
-              </div>
-            </div>
-            <MobileNumberPicker
-              value={bedHeightDisplay}
-              unit={units === 'metric' ? 'cm' : 'in'}
-              min={units === 'metric' ? 20 : 8}
-              max={units === 'metric' ? 120 : 48}
-              step={1}
-              quickStep={5}
-              onChange={setBedHeightDisplay}
-              id="settings-bed-height"
-            />
           </div>
         </div>
       </div>
@@ -678,7 +705,7 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingBottom: '1rem' }}>
           <p style={{ fontSize: '0.82rem', color: 'var(--m-text-muted)', margin: 0, lineHeight: 1.4 }}>
-            Ensure your phone and PC are connected to the same Wi-Fi. On your PC, click <strong>Start Wi-Fi Sync Server</strong> in Settings, then enter the IP and 4-digit PIN displayed on your PC screen:
+            Ensure your phone and PC are connected to the same Wi-Fi. On your PC, click <strong>Start Wi-Fi Sync Server</strong> in Settings, then enter the IP and 6-digit PIN displayed on your PC screen:
           </p>
 
           {syncMessage && (
@@ -728,15 +755,15 @@ export const MobileSettingsScreen: React.FC<MobileSettingsScreenProps> = ({
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--m-text-muted)', marginBottom: '0.35rem', display: 'block' }}>
-                4-Digit PIN
+                6-Digit PIN
               </label>
               <input
                 type="text"
-                maxLength={4}
+                maxLength={6}
                 className="m-input"
                 value={lanPin}
                 onChange={(e) => setLanPin(e.target.value)}
-                placeholder="1234"
+                placeholder="123456"
                 style={{
                   width: '100%',
                   height: '46px',

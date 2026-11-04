@@ -192,11 +192,7 @@ pub struct Settings {
 
 impl Settings {
     pub fn get_available_equipment(&self) -> Vec<String> {
-        let mut eq = if self.enabled_equipment.is_empty() {
-            default_equipment()
-        } else {
-            self.enabled_equipment.clone()
-        };
+        let mut eq = self.enabled_equipment.clone();
         if !eq.contains(&"none".to_string()) {
             eq.push("none".to_string());
         }
@@ -219,7 +215,7 @@ impl Default for Settings {
         Self {
             units: Units::Metric,
             backpack: false,
-            bed_height_cm: 50.0,
+            bed_height_cm: 35.0,
             priority_muscles: vec![Muscle::Chest],
             maintenance_on: true,
             experience: ExperienceLevel::SixTo24Months,
@@ -300,6 +296,8 @@ pub struct Plan {
     pub is_deload: bool,
     #[serde(default)]
     pub pre_deload_sessions: Option<Vec<Session>>,
+    #[serde(default)]
+    pub scheduling_alerts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +309,8 @@ pub struct SetLog {
     pub reps_or_seconds: u32,
     pub added_weight_kg: f64,
     pub reps_from_failure: u32,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

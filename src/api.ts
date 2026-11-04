@@ -9,7 +9,6 @@ import {
   LanSyncStatus,
   Plan,
   Profile,
-  ProgressionSuggestion,
   Session,
   SetLog,
   Settings,
@@ -24,6 +23,9 @@ export const api = {
 
   getProfile: () => invoke<Profile>('get_profile'),
 
+  updateProfile: (profile: Profile) =>
+    invoke<Profile>('update_profile', { profile }),
+
   calibrate: (answers: CalibrationAnswers) =>
     invoke<[Profile, string, number]>('calibrate', { answers }),
 
@@ -37,16 +39,15 @@ export const api = {
   swapExercise: (
     sessionNumber: number,
     blockIndex: number,
-    newExerciseId: string
+    newExerciseId: string,
+    addedWeightKg?: number
   ) =>
     invoke<Session>('swap_exercise', {
       sessionNumber,
       blockIndex,
       newExerciseId,
+      addedWeightKg: addedWeightKg ?? 0.0,
     }),
-
-  logSet: (log: SetLog) =>
-    invoke<ProgressionSuggestion | null>('log_set', { log }),
 
   completeSession: (session: CompletedSession, sets: SetLog[]) =>
     invoke<CompleteSessionResponse>('complete_session', { session, sets }),
@@ -92,4 +93,34 @@ export const api = {
   getLanSyncStatus: () => invoke<LanSyncStatus>('get_lan_sync_status'),
 
   getLanClientMeta: () => invoke<ClientSyncMeta | null>('get_lan_client_meta'),
+
+  startRestTimerNotification: (
+    title: string,
+    text: string,
+    targetEpochMillis: number
+  ) =>
+    invoke<void>('start_rest_timer_notification', {
+      title,
+      text,
+      targetEpochMillis,
+    }),
+
+  cancelRestTimerNotification: () =>
+    invoke<void>('cancel_rest_timer_notification'),
+
+  adjustRestTimerNotification: (
+    targetEpochMillis: number,
+    text?: string
+  ) =>
+    invoke<void>('adjust_rest_timer_notification', {
+      targetEpochMillis,
+      text,
+    }),
+
+  getRestTimerStatus: () =>
+    invoke<{
+      is_active: boolean;
+      target_epoch_millis: number;
+      last_action?: string | null;
+    }>('get_rest_timer_status'),
 };

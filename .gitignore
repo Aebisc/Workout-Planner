@@ -1,9 +1,8 @@
-# Dependencies & Lockfiles
+# Dependencies
 node_modules/
 .pnp
 .pnp.js
-package-lock.json
-Cargo.lock
+# Lockfiles are committed for reproducible builds (app, not a library).
 
 # Frontend Build & Caches
 dist/
@@ -14,7 +13,7 @@ out/
 *.tsbuildinfo
 
 # Public Assets
-public/
+# (public/ itself is tracked: app-icon.png and favicon are referenced by the app)
 
 # Rust / Cargo Build Outputs
 target/

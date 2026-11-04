@@ -9,8 +9,11 @@ import {
   SessionExerciseSummary,
   SetLog,
   Settings,
+  Profile,
 } from '../../types';
 import { formatBackpackLoad } from '../../utils/units';
+import { calculateDifficultyMetrics, isDumbbellExercise } from '../../utils/difficulty';
+import { remapDraftSets } from '../../utils/sessionDrafts';
 import {
   getOptimalRestSeconds,
   playRestCompleteChime,
@@ -46,10 +49,25 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
 
   const [restTimer, setRestTimer] = useState<MobileRestTimerState | null>(null);
 
+  const [sessionId] = useState<string>(() => {
+    const idKey = `mgp_active_session_id_${sessionNumber}`;
+    try {
+      const existing = localStorage.getItem(idKey);
+      if (existing) return existing;
+      const newId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      localStorage.setItem(idKey, newId);
+      return newId;
+    } catch {
+      return `sess_${Date.now()}`;
+    }
+  });
+
   // Active workout session's sets: Record<blockIndex, SetLog[]>
   const [currentSessionSets, setCurrentSessionSets] = useState<Record<number, SetLog[]>>(() => {
     try {
-      const saved = sessionStorage.getItem(`mgp_active_session_${sessionNumber}`);
+      const saved = localStorage.getItem(`mgp_active_draft_session_${sessionNumber}`) || sessionStorage.getItem(`mgp_active_session_${sessionNumber}`);
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -67,24 +85,44 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     muscle: Muscle;
     exerciseId: string;
     blockIndex: number;
+    addedWeightKg: number;
   }>({
     isOpen: false,
     muscle: 'chest',
     exerciseId: '',
     blockIndex: 0,
+    addedWeightKg: 0,
   });
 
   // Finishing session state
   const [submittingSession, setSubmittingSession] = useState<boolean>(false);
   const [progressionSuggestions, setProgressionSuggestions] = useState<ProgressionSuggestion[]>([]);
   const [appliedSuggestions, setAppliedSuggestions] = useState<Record<string, boolean>>({});
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [restoredDeload, setRestoredDeload] = useState<boolean>(false);
+  const [historicalSetLogs, setHistoricalSetLogs] = useState<SetLog[]>([]);
+  const [prsAchieved, setPrsAchieved] = useState<
+    Array<{
+      exerciseName: string;
+      newRecord: number;
+      previousBest: number;
+      diff: number;
+      isTimeBased: boolean;
+    }>
+  >([]);
   const [completedSummary, setCompletedSummary] = useState<{
     sessionNumber: number;
     totalSets: number;
     exercises: SessionExerciseSummary[];
     deloadCycleCompleted?: boolean;
   } | null>(null);
+
+  // Ensure native lockscreen timer notification is cleared on unmount
+  useEffect(() => {
+    return () => {
+      api.cancelRestTimerNotification().catch(() => {});
+    };
+  }, []);
 
   // Drift-free countdown timer effect (prevents infinite chime loop)
   useEffect(() => {
@@ -126,6 +164,45 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     return () => window.clearInterval(interval);
   }, [restTimer?.isActive, restTimer?.endTimeMs, soundEnabled]);
 
+  // Sync rest timer state with Lock Screen notification actions (+30s, Skip) upon returning to app
+  useEffect(() => {
+    const syncLockScreenTimer = async () => {
+      try {
+        const status = await api.getRestTimerStatus();
+        if (status.last_action === 'skip') {
+          setRestTimer(null);
+        } else if (status.last_action === 'add_30' && status.target_epoch_millis > 0) {
+          setRestTimer((prev) => {
+            if (!prev) return null;
+            const remaining = Math.max(0, Math.ceil((status.target_epoch_millis - Date.now()) / 1000));
+            return {
+              ...prev,
+              isActive: remaining > 0,
+              isFinished: remaining <= 0,
+              endTimeMs: status.target_epoch_millis,
+              remainingSeconds: remaining,
+            };
+          });
+        }
+      } catch {
+        // Desktop or unsupported platform fallback
+      }
+    };
+
+    const handleFocus = () => {
+      if (document.visibilityState === 'visible') {
+        syncLockScreenTimer();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleFocus);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleFocus);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+
   // Auto-scroll exercise pill into view when active block changes
   useEffect(() => {
     pillRefs.current[activeBlockIndex]?.scrollIntoView({
@@ -137,7 +214,13 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
 
   const loadData = async () => {
     try {
-      const [plan, exList] = await Promise.all([api.getPlan(), api.getExercises()]);
+      const [plan, exList, allLogs] = await Promise.all([
+        api.getPlan(),
+        api.getExercises(),
+        api.getSetLogs().catch(() => [] as SetLog[]),
+        api.getProfile().then(setProfile).catch(() => {}),
+      ]);
+      setHistoricalSetLogs(allLogs);
       const exMap: Record<string, Exercise> = {};
       exList.forEach((e) => {
         exMap[e.id] = e;
@@ -148,6 +231,9 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
         const found = plan.sessions.find((s) => s.session_number === sessionNumber);
         if (found) {
           setSession(found);
+          // Swaps and applied progressions re-sort blocks; keep draft sets attached
+          // to the exercise they were logged for, not to a stale block index.
+          setCurrentSessionSets((prev) => remapDraftSets(prev, session, found));
           // Initialize active input defaults
           const initInput: Record<number, { reps: number; rir: number }> = {};
           found.blocks.forEach((b, idx) => {
@@ -193,13 +279,15 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     });
   }, [registerBackIntercept, currentSessionSets, completedSummary]);
 
-  // Persist active session sets to sessionStorage
+  // Persist active session sets to localStorage (survives Android OS WebView restarts)
   useEffect(() => {
     try {
-      sessionStorage.setItem(
-        `mgp_active_session_${sessionNumber}`,
-        JSON.stringify(currentSessionSets)
-      );
+      const draftKey = `mgp_active_draft_session_${sessionNumber}`;
+      if (Object.keys(currentSessionSets).length > 0) {
+        localStorage.setItem(draftKey, JSON.stringify(currentSessionSets));
+      } else {
+        localStorage.removeItem(draftKey);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -232,6 +320,35 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     rir: 2,
   };
 
+  const getExerciseHistoryStats = (exerciseId: string) => {
+    const prevLogs = historicalSetLogs.filter(
+      (l) => l.exercise_id === exerciseId && (!l.session_id || l.session_id !== sessionId)
+    );
+    if (prevLogs.length === 0) {
+      return { lastPerf: null, allTimeMaxReps: 0 };
+    }
+
+    const allTimeMaxReps = Math.max(...prevLogs.map((l) => l.reps_or_seconds));
+    const sorted = [...prevLogs].sort((a, b) => b.timestamp - a.timestamp);
+    const latestTs = sorted[0].timestamp;
+    const lastSessionSets = sorted
+      .filter((l) => Math.abs(l.timestamp - latestTs) < 43_200_000)
+      .reverse();
+
+    const reps = lastSessionSets.map((l) => l.reps_or_seconds);
+    const addedWeight = lastSessionSets[0]?.added_weight_kg || 0;
+    const avgRir =
+      lastSessionSets.reduce((acc, l) => acc + l.reps_from_failure, 0) /
+      (lastSessionSets.length || 1);
+
+    return {
+      lastPerf: { reps, addedWeight, avgRir },
+      allTimeMaxReps,
+    };
+  };
+
+  const { lastPerf, allTimeMaxReps } = getExerciseHistoryStats(activeBlock.exercise_id);
+
   const handleAddSet = (blockIdx: number, exerciseId: string) => {
     const input = activeInput[blockIdx] || { reps: 10, rir: 2 };
     if (input.reps <= 0) return;
@@ -244,6 +361,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
       reps_or_seconds: input.reps,
       added_weight_kg: activeBlock.added_weight_kg || 0,
       reps_from_failure: input.rir,
+      session_id: sessionId,
     };
 
     setCurrentSessionSets((prev) => ({
@@ -251,20 +369,37 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
       [blockIdx]: [...(prev[blockIdx] || []), newLog],
     }));
 
-    // Trigger Rest Timer
-    const ex = exercises[exerciseId];
-    const { seconds, label, reason } = getOptimalRestSeconds(ex, activeBlock, input.rir);
-    setRestTimer({
-      isActive: true,
-      isFinished: false,
-      blockIndex: blockIdx,
-      exerciseName: ex ? ex.name : exerciseId.replace(/_/g, ' '),
-      totalSeconds: seconds,
-      remainingSeconds: seconds,
-      endTimeMs: Date.now() + seconds * 1000,
-      label,
-      reason,
-    });
+    // Smart Rest Timer Finish: If this was the final planned set of the whole workout, skip timer
+    const isLastBlock = blockIdx === session.blocks.length - 1;
+    const setsAfterThis = (currentSessionSets[blockIdx]?.length || 0) + 1;
+    const isFinalTargetSetOfWorkout = isLastBlock && setsAfterThis >= activeBlock.sets;
+
+    if (isFinalTargetSetOfWorkout) {
+      handleDismissTimer();
+    } else {
+      // Trigger Rest Timer
+      const ex = exercises[exerciseId];
+      const { seconds, label, reason } = getOptimalRestSeconds(ex, activeBlock, input.rir);
+      const targetTime = Date.now() + seconds * 1000;
+      const exName = ex ? ex.name : exerciseId.replace(/_/g, ' ');
+      setRestTimer({
+        isActive: true,
+        isFinished: false,
+        blockIndex: blockIdx,
+        exerciseName: exName,
+        totalSeconds: seconds,
+        remainingSeconds: seconds,
+        endTimeMs: targetTime,
+        label,
+        reason,
+      });
+      // Start Lock Screen / Native Chronometer Notification
+      api.startRestTimerNotification(
+        `Rest Timer • ${label || 'Optimal Rest'}`,
+        `Next: ${exName}`,
+        targetTime
+      ).catch(() => {});
+    }
   };
 
   const handleRemoveSet = (blockIdx: number, setIdx: number) => {
@@ -275,19 +410,26 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     });
   };
 
+  const handleDismissTimer = () => {
+    setRestTimer(null);
+    api.cancelRestTimerNotification().catch(() => {});
+  };
+
   const handleAdjustTimer = (delta: number) => {
     if (!restTimer) return;
     const currentRemaining = restTimer.isActive
       ? Math.max(0, Math.ceil((restTimer.endTimeMs - Date.now()) / 1000))
       : restTimer.remainingSeconds;
     const newRemaining = Math.max(5, currentRemaining + delta);
+    const newEndTimeMs = Date.now() + newRemaining * 1000;
     setRestTimer({
       ...restTimer,
       isActive: true,
       isFinished: false,
       remainingSeconds: newRemaining,
-      endTimeMs: Date.now() + newRemaining * 1000,
+      endTimeMs: newEndTimeMs,
     });
+    api.adjustRestTimerNotification(newEndTimeMs).catch(() => {});
   };
 
   const handleFinishWorkout = async () => {
@@ -298,6 +440,34 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     }
 
     setSubmittingSession(true);
+
+    // Calculate any PRs achieved during this workout
+    const newlyAchievedPRs: Array<{
+      exerciseName: string;
+      newRecord: number;
+      previousBest: number;
+      diff: number;
+      isTimeBased: boolean;
+    }> = [];
+
+    session.blocks.forEach((b, bIdx) => {
+      const bLogs = currentSessionSets[bIdx] || [];
+      const { allTimeMaxReps } = getExerciseHistoryStats(b.exercise_id);
+      if (allTimeMaxReps > 0 && bLogs.length > 0) {
+        const topRep = Math.max(0, ...bLogs.map((l) => l.reps_or_seconds));
+        if (topRep > allTimeMaxReps) {
+          const ex = exercises[b.exercise_id];
+          newlyAchievedPRs.push({
+            exerciseName: ex ? ex.name : b.exercise_id.replace(/_/g, ' '),
+            newRecord: topRep,
+            previousBest: allTimeMaxReps,
+            diff: topRep - allTimeMaxReps,
+            isTimeBased: ex?.time_based ?? false,
+          });
+        }
+      }
+    });
+    setPrsAchieved(newlyAchievedPRs);
 
     const summaries: SessionExerciseSummary[] = session.blocks
       .map((b, bIdx) => {
@@ -320,7 +490,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
       .filter((s) => s.sets_completed > 0);
 
     const completedSess: CompletedSession = {
-      id: `sess-${session.session_number}-${Date.now()}`,
+      id: sessionId,
       timestamp: Date.now(),
       session_number: session.session_number,
       focus: session.focus,
@@ -331,9 +501,11 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     try {
       const response = await api.completeSession(completedSess, allLoggedSets);
       setProgressionSuggestions(response.suggestions || []);
+      localStorage.removeItem(`mgp_active_draft_session_${sessionNumber}`);
+      localStorage.removeItem(`mgp_active_session_id_${sessionNumber}`);
       sessionStorage.removeItem(`mgp_active_session_${sessionNumber}`);
       setCurrentSessionSets({});
-      setRestTimer(null);
+      handleDismissTimer();
       setCompletedSummary({
         sessionNumber: session.session_number,
         totalSets: allLoggedSets.length,
@@ -356,12 +528,30 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     actionKey: string
   ) => {
     try {
-      await api.applyProgression({
+      const updatedPlan = await api.applyProgression({
         sessionNumber: sugg.session_number,
         blockIndex: sugg.block_index,
         ...params,
       });
       setAppliedSuggestions((prev) => ({ ...prev, [actionKey]: true }));
+
+      // Advancing a variation re-sorts blocks; re-align the remaining suggestions
+      // to the fresh order (and drop ones whose exercise no longer exists).
+      const freshSession = updatedPlan.sessions.find(
+        (s) => s.session_number === sugg.session_number
+      );
+      if (freshSession) {
+        setProgressionSuggestions((prev) =>
+          prev
+            .map((sg) => {
+              const idx = freshSession.blocks.findIndex(
+                (b) => b.exercise_id === sg.exercise_id
+              );
+              return idx >= 0 ? { ...sg, block_index: idx } : null;
+            })
+            .filter((sg): sg is ProgressionSuggestion => sg !== null)
+        );
+      }
       await loadData();
     } catch (err) {
       alert(`Failed to apply progression: ${err}`);
@@ -378,9 +568,9 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
     }
   };
 
-  const handleSwapSelected = async (newExId: string) => {
+  const handleSwapSelected = async (newExId: string, addedWeightKg?: number) => {
     try {
-      await api.swapExercise(session.session_number, swapSheet.blockIndex, newExId);
+      await api.swapExercise(session.session_number, swapSheet.blockIndex, newExId, addedWeightKg);
       await loadData();
     } catch (err) {
       alert(`Swap failed: ${err}`);
@@ -459,6 +649,32 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
               <span style={{ fontSize: '0.75rem', background: 'rgba(255, 255, 255, 0.08)', color: 'var(--m-text-muted)', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>
                 {activeBlock.tempo_cue}
               </span>
+              {(() => {
+                if (!activeEx || isDumbbellExercise(activeEx)) return null;
+                const dm = calculateDifficultyMetrics(
+                  activeEx,
+                  profile?.body_weight_kg,
+                  activeBlock.added_weight_kg,
+                  settings.units,
+                  activeBlock.tempo_cue,
+                  settings.bed_height_cm
+                );
+                return (
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      background: 'rgba(6, 182, 212, 0.15)',
+                      color: 'var(--m-cyan)',
+                      border: '1px solid rgba(6, 182, 212, 0.35)',
+                      padding: '0.2rem 0.5rem',
+                      borderRadius: '4px',
+                      fontWeight: 700,
+                    }}
+                  >
+                    ⚡ {dm.fullBadgeText}
+                  </span>
+                );
+              })()}
             </div>
 
             {/* Rest Target and Form Cues */}
@@ -470,6 +686,49 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
             {activeEx && activeEx.cues && (
               <div style={{ fontSize: '0.78rem', color: 'var(--m-text-muted)', marginTop: '0.35rem', fontStyle: 'italic', lineHeight: 1.35 }}>
                 💡 {activeEx.cues}
+              </div>
+            )}
+
+            {/* Last Session Performance Reference */}
+            {lastPerf ? (
+              <div
+                style={{
+                  marginTop: '0.65rem',
+                  padding: '0.45rem 0.65rem',
+                  borderRadius: 'var(--m-radius-sm)',
+                  background: 'rgba(99, 102, 241, 0.08)',
+                  border: '1px solid rgba(99, 102, 241, 0.25)',
+                  fontSize: '0.8rem',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.15rem' }}>
+                  <span style={{ fontSize: '0.85rem' }}>⚡</span>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--m-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Last Session
+                  </span>
+                </div>
+                <div style={{ color: 'var(--m-text-main)', fontSize: '0.82rem' }}>
+                  <strong>{lastPerf.reps.join(', ')} {activeEx?.time_based ? 's' : 'reps'}</strong>
+                  {lastPerf.addedWeight > 0 && (
+                    <span style={{ color: 'var(--m-cyan)', fontWeight: 700 }}> @ +{lastPerf.addedWeight}kg</span>
+                  )}
+                  <span style={{ color: 'var(--m-text-muted)', fontSize: '0.75rem', marginLeft: '0.35rem' }}>
+                    (avg {lastPerf.avgRir.toFixed(1)} RIR)
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  marginTop: '0.65rem',
+                  padding: '0.35rem 0.65rem',
+                  borderRadius: 'var(--m-radius-sm)',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  fontSize: '0.75rem',
+                  color: 'var(--m-text-muted)',
+                }}
+              >
+                ⚡ <strong>Last Session:</strong> First time logging this variation!
               </div>
             )}
           </div>
@@ -493,6 +752,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
                 muscle: activeEx ? activeEx.primary_muscle : 'chest',
                 exerciseId: activeBlock.exercise_id,
                 blockIndex: activeBlockIndex,
+                addedWeightKg: activeBlock.added_weight_kg ?? 0,
               })
             }
           >
@@ -600,7 +860,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
           <button
             type="button"
             className="m-btn m-btn-primary"
-            style={{ marginTop: '1.25rem', height: '54px', fontSize: '1.05rem' }}
+            style={{ marginTop: '1rem', height: '54px', fontSize: '1.05rem' }}
             onClick={() => handleAddSet(activeBlockIndex, activeBlock.exercise_id)}
           >
             ✓ Log Set {blockLogs.length + 1}
@@ -610,38 +870,62 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
         {/* Logged Sets List for this Exercise */}
         {blockLogs.length > 0 && (
           <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-            {blockLogs.map((log, lIdx) => (
-              <span
-                key={lIdx}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  padding: '0.35rem 0.65rem',
-                  borderRadius: '999px',
-                  background: log.reps_from_failure <= 3 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
-                  color: log.reps_from_failure <= 3 ? '#34d399' : '#fbbf24',
-                  fontSize: '0.8rem',
-                  fontWeight: 700,
-                }}
-              >
-                Set {lIdx + 1}: {log.reps_or_seconds} {activeEx && activeEx.time_based ? 's' : 'r'} (RIR {log.reps_from_failure})
-                <button
-                  type="button"
+            {blockLogs.map((log, lIdx) => {
+              const isPR = allTimeMaxReps > 0 && log.reps_or_seconds > allTimeMaxReps;
+              return (
+                <span
+                  key={lIdx}
                   style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'inherit',
-                    cursor: 'pointer',
-                    padding: '0 0.15rem',
-                    fontSize: '0.9rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    padding: '0.35rem 0.65rem',
+                    borderRadius: '999px',
+                    background:
+                      log.reps_from_failure <= 3
+                        ? 'rgba(16, 185, 129, 0.2)'
+                        : 'rgba(245, 158, 11, 0.2)',
+                    color:
+                      log.reps_from_failure <= 3
+                        ? '#34d399'
+                        : '#fbbf24',
+                    fontSize: '0.8rem',
+                    fontWeight: 700,
                   }}
-                  onClick={() => handleRemoveSet(activeBlockIndex, lIdx)}
                 >
-                  ✕
-                </button>
-              </span>
-            ))}
+                  Set {lIdx + 1}: {log.reps_or_seconds} {activeEx && activeEx.time_based ? 's' : 'r'} (RIR {log.reps_from_failure})
+                  {isPR && (
+                    <span
+                      style={{
+                        fontSize: '0.68rem',
+                        fontWeight: 900,
+                        background: 'linear-gradient(135deg, #fbbf24, #d97706)',
+                        color: '#000',
+                        padding: '0.1rem 0.35rem',
+                        borderRadius: '999px',
+                        marginLeft: '0.2rem',
+                      }}
+                    >
+                      🏆 PR
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'inherit',
+                      cursor: 'pointer',
+                      padding: '0 0.15rem',
+                      fontSize: '0.9rem',
+                    }}
+                    onClick={() => handleRemoveSet(activeBlockIndex, lIdx)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
 
@@ -666,6 +950,27 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
         )}
       </div>
 
+      {/* All Sets Complete Notification */}
+      {session &&
+        session.blocks.length > 0 &&
+        session.blocks.every((b, idx) => (currentSessionSets[idx] || []).length >= b.sets) && (
+          <div
+            className="m-card"
+            style={{
+              marginTop: '1rem',
+              padding: '0.85rem 1rem',
+              background: 'rgba(16, 185, 129, 0.15)',
+              border: '1px solid rgba(16, 185, 129, 0.4)',
+              textAlign: 'center',
+              color: '#34d399',
+              fontSize: '0.88rem',
+              fontWeight: 800,
+            }}
+          >
+            🎉 All scheduled sets completed! Tap Finish below to save your workout.
+          </div>
+        )}
+
       {/* Finish Workout Action */}
       <div style={{ marginTop: '1.5rem', marginBottom: restTimer ? '6.5rem' : '2.5rem' }}>
         <button
@@ -685,7 +990,7 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
         soundEnabled={soundEnabled}
         onToggleSound={() => setSoundEnabled((prev) => !prev)}
         onAdjustTimer={handleAdjustTimer}
-        onDismiss={() => setRestTimer(null)}
+        onDismiss={handleDismissTimer}
       />
 
       {/* Exercise Swap Sheet */}
@@ -694,8 +999,18 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
         onClose={() => setSwapSheet((prev) => ({ ...prev, isOpen: false }))}
         muscle={swapSheet.muscle}
         currentExerciseId={swapSheet.exerciseId}
+        currentAddedWeightKg={swapSheet.addedWeightKg}
         onSwapSelected={handleSwapSelected}
         backpackEnabled={settings.backpack}
+        confirmSwap={() => {
+          const logged = (currentSessionSets[swapSheet.blockIndex] || []).length;
+          if (logged > 0) {
+            return window.confirm(
+              `You have ${logged} logged set${logged > 1 ? 's' : ''} for this exercise in your draft. Swapping will discard ${logged > 1 ? 'them' : 'it'}. Continue?`
+            );
+          }
+          return true;
+        }}
       />
 
       {/* Exit Guard Bottom Sheet */}
@@ -742,6 +1057,8 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
             style={{ height: '44px', fontSize: '0.88rem', color: 'var(--m-red)' }}
             onClick={() => {
               try {
+                localStorage.removeItem(`mgp_active_draft_session_${sessionNumber}`);
+                localStorage.removeItem(`mgp_active_session_id_${sessionNumber}`);
                 sessionStorage.removeItem(`mgp_active_session_${sessionNumber}`);
               } catch {}
               setCurrentSessionSets({});
@@ -778,6 +1095,32 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
             You completed {completedSummary?.totalSets} hypertrophy sets across {completedSummary?.exercises.length} exercises.
           </p>
         </div>
+
+        {/* Personal Records Achieved */}
+        {prsAchieved.length > 0 && (
+          <div
+            style={{
+              margin: '0.85rem 0 1rem',
+              padding: '0.85rem 1rem',
+              borderRadius: 'var(--m-radius-md)',
+              background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.25))',
+              border: '1px solid #f59e0b',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
+              <span style={{ fontSize: '1.1rem' }}>🏆</span>
+              <span style={{ fontWeight: 800, fontSize: '0.9rem', color: '#fbbf24' }}>
+                New Personal Record{prsAchieved.length > 1 ? 's' : ''}!
+              </span>
+            </div>
+            {prsAchieved.map((pr, pIdx) => (
+              <div key={pIdx} style={{ fontSize: '0.82rem', color: 'var(--m-text-main)', marginTop: '0.2rem' }}>
+                <strong>{pr.exerciseName}:</strong> {pr.newRecord} {pr.isTimeBased ? 'sec' : 'reps'}{' '}
+                <span style={{ color: '#34d399', fontWeight: 700 }}>(+{pr.diff} vs previous best {pr.previousBest})</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Deload Completed Notification & Restore Action */}
         {completedSummary?.deloadCycleCompleted && (
@@ -820,9 +1163,9 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
               Progression Earned! 🚀
             </h4>
             {progressionSuggestions.map((sug, sIdx) => {
-              const tempoKey = `${sug.session_number}-${sug.block_index}-tempo`;
-              const advanceKey = `${sug.session_number}-${sug.block_index}-advance`;
-              const backpackKey = `${sug.session_number}-${sug.block_index}-backpack`;
+              const tempoKey = `${sug.session_number}-${sug.exercise_id}-tempo`;
+              const advanceKey = `${sug.session_number}-${sug.exercise_id}-advance`;
+              const backpackKey = `${sug.session_number}-${sug.exercise_id}-backpack`;
               const targetBlock = session.blocks[sug.block_index];
               const targetEx = targetBlock ? exercises[targetBlock.exercise_id] : undefined;
               const exName = targetEx?.name || targetBlock?.exercise_id?.replace(/_/g, ' ') || 'Exercise';
@@ -883,6 +1226,71 @@ export const MobileSessionScreen: React.FC<MobileSessionScreenProps> = ({
                           )
                         )}
                       </>
+                    )}
+
+                    {sug.action === 'dual_progression' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%' }}>
+                        {sug.new_added_weight_kg !== null && (
+                          appliedSuggestions[backpackKey] ? (
+                            <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Applied Added Load</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="m-btn m-btn-primary"
+                              style={{ height: '38px', fontSize: '0.82rem', padding: '0 0.75rem', width: '100%', justifyContent: 'center' }}
+                              onClick={() =>
+                                handleApplyProgression(
+                                  sug,
+                                  { newAddedWeightKg: sug.new_added_weight_kg },
+                                  backpackKey
+                                )
+                              }
+                            >
+                              🦺 Weighted Track: Add {settings.units === 'imperial' ? `${((sug.new_added_weight_kg || 0) * 2.20462).toFixed(1)} lb` : `${sug.new_added_weight_kg} kg`}
+                            </button>
+                          )
+                        )}
+                        {sug.next_exercise_id && (
+                          appliedSuggestions[advanceKey] ? (
+                            <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Advanced Variation</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="m-btn m-btn-secondary"
+                              style={{ height: '38px', fontSize: '0.82rem', padding: '0 0.75rem', width: '100%', justifyContent: 'center' }}
+                              onClick={() =>
+                                handleApplyProgression(
+                                  sug,
+                                  { newExerciseId: sug.next_exercise_id },
+                                  advanceKey
+                                )
+                              }
+                            >
+                              ⬆ Bodyweight Track: Advance to {exercises[sug.next_exercise_id]?.name || sug.next_exercise_id.replace(/_/g, ' ')}
+                            </button>
+                          )
+                        )}
+                        {sug.new_tempo_cue && !sug.next_exercise_id && (
+                          appliedSuggestions[tempoKey] ? (
+                            <span style={{ color: 'var(--m-green)', fontWeight: 700, fontSize: '0.8rem' }}>✓ Applied Tempo</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="m-btn m-btn-secondary"
+                              style={{ height: '38px', fontSize: '0.82rem', padding: '0 0.75rem', width: '100%', justifyContent: 'center' }}
+                              onClick={() =>
+                                handleApplyProgression(
+                                  sug,
+                                  { newTempoCue: sug.new_tempo_cue },
+                                  tempoKey
+                                )
+                              }
+                            >
+                              ⏱ Bodyweight Track: 3–4s Tempo & Pause
+                            </button>
+                          )
+                        )}
+                      </div>
                     )}
 
                     {sug.action === 'advance_variation' && sug.next_exercise_id && (
