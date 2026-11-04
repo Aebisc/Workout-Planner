@@ -1,160 +1,149 @@
-# Workout Planner
+🏋️‍♂️ Workout Planner
 
-An evidence-based, cross-platform calisthenics and hypertrophy training planner built with **Tauri v2 (Rust core)** and **React 19 (TypeScript)**. 
+A fast, 100% offline, cross-platform hypertrophy & workout tracking app built with Rust (Tauri v2) and React/TypeScript.
 
-Designed around minimal equipment (bodyweight, pull-up bar, bed/elevation, parallettes, backpack, 10kg weight vest, and adjustable dumbbells), Workout Planner schedules and tracks training according to research-backed exercise physiology—driven strictly by two primary user inputs: **sets per day** and **days per week**.
+Workout Planner is engineered around evidence-based muscle growth and volume management—eliminating subscription bloat, cloud lock-ins, and clunky spreadsheets. Available natively on Desktop and Mobile (Android).
 
----
+✨ Key Features
 
-## Key Features
+🧠 Evidence-Based Volume & Hypertrophy Engine
 
-### 1. Scientific Volume & Progression Engine
-- **Strict Volume Invariance:** Session set budgets remain constant based on your preference; the app never arbitrarily inflates workout volume.
-- **5-Tier Hypertrophy Analysis:** Tracks rolling weekly effective volume (direct + indirect synergist-weighted stimulus) across Maintenance, Minimum Effective, Adaptive, Maximum Recoverable, and Overtraining thresholds.
-- **Biomechanical Double Progression:** Systematically guides progress inside fixed set budgets:
-  $$\text{Reps to target ceiling} \longrightarrow \text{Execution Intensifiers (tempo/pause/lengthened partials)} \longrightarrow \text{Harder Variation (ladder rung)} \longrightarrow \text{Backpack Load (1.5 L bottles)}$$
-- **Synergist-Aware Exercise Ordering:** Compound multi-joint movements are automatically scheduled before isolations to prevent synergist fatigue from limiting prime mover tension.
-- **Proximity-to-Failure Filtering:** Only hard sets performed within 0–3 Reps in Reserve (RIR $\le 3$) count toward weekly stimulus.
-- **Cycle Snapping:** Maps integer or fractional training days per week (e.g. 4.67 $\rightarrow$ 2-on/1-off; 3.50 $\rightarrow$ every other day) to repeating microcycles with automatic frequency reconciliation.
-- **Deload Lifecycle:** 1-tap deload action cuts session volume by 50% for one microcycle to clear systemic fatigue without losing planned exercise rungs or progress.
-- **Active Rest Timer:** Intelligent rest duration countdowns tailored by exercise complexity (compound vs isolation) with pause/skip controls and audible finish chimes.
+Direct & Indirect Stimulus Tracking: Automatically calculates weekly set volume per muscle group, accounting for both primary movers (direct sets) and secondary/synergist muscles (indirect sets).
 
-### 2. Dual Responsive Architecture (Desktop & Mobile)
-- **Desktop System:** Multi-pane obsidian glassmorphism UI designed for widescreen displays, keyboard navigation, and detailed volume analytics.
-- **Mobile Touch Subsystem:** Purpose-built, thumb-first mobile layout for gym floor tracking:
-  - Custom full-width numeric keypads and quick preset buttons eliminating soft-keyboard layout jumps.
-  - Swipe-to-dismiss bottom sheets with drag threshold tracking.
-  - Android hardware back button handler managing an in-memory modal stack.
-  - Automatic draft state persistence in `sessionStorage` preventing accidental workout loss on navigation or incoming calls.
+Zero "Junk Volume": Evaluates your weekly stimulus against scientific hypertrophy landmarks (Maintenance, Small Growth, Optimal Growth, and Overreaching Warning Tiers) so you maximize progress without burning out.
 
-### 3. Triple-Sync Cross-Device Data Hub
-Move your complete workout history, profile, settings, and active plan seamlessly across devices:
-- **Local Wi-Fi Direct LAN Sync:** Host a local Wi-Fi server on your PC (port 7878 with a secure 4-digit PIN); mobile clients on the same Wi-Fi network push or pull complete database state in ~50ms with zero cloud dependence.
-- **Private Cloud Sync (GitHub Secret Gist):** 1-tap backup and restore using a personal GitHub access token storing an encrypted, private `mgp_sync_state.json`.
-- **Offline File & Clipboard Sync:** Export or import atomic `.json` state files, or copy/paste an encoded `MGP1:` sync string between devices.
-- **100% Local & Private:** All settings, calibration profiles, and workout logs are stored locally as JSON files in `%APPDATA%/com.musclegrowthplanner.app` (Desktop) or app-private storage (Android).
+2-Question Onboarding Calibration: Generates a balanced training split tailored around two realistic constraints: how many days per week you can train and how many hard sets you can recover from per session.
 
----
+📈 Smart Progressive Overload & Customization
 
-## Tech Stack
+Per-Exercise Weight Configuration: Customize load increments, starting weights, and equipment rules on a per-exercise basis.
 
-| Layer | Technology |
-|---|---|
-| **Core & Backend** | Rust 2024, Tauri v2, Serde, Tiny-HTTP (LAN Sync) |
-| **Frontend UI** | React 19, TypeScript, Vite, CSS Modules / Custom Glassmorphism |
-| **Mobile Runtime** | Tauri v2 Android (ARM64 / AArch64 / X86_64) |
-| **Data & Storage** | Local JSON Persistence, In-Memory Caching, Embedded Seed Data |
+Guided Progression: Step-by-step load and rep progression logic (progression.rs) that removes the guesswork from your next session.
 
----
+Cycle Calibration & Swaps: Easily swap exercises on the fly (ExerciseSwapModal / MobileExerciseSwapSheet) or recalibrate your training cycle as your schedule or recovery changes.
 
-## Development & Running Locally
+📱 Cross-Platform Desktop & Mobile Experience
 
-### Prerequisites
-- [Rust](https://rustup.rs/) (stable channel, 1.85+)
-- [Node.js](https://nodejs.org/) (v18+)
-- For Android builds: Android Studio with SDK (API 34+), NDK (27+), and Java 17+
+Dedicated Responsive UIs: Tailored desktop interface (src/screens/) and native-feeling mobile interface (src/mobile/) featuring bottom sheets, wheel number pickers, and gesture-friendly navigation.
 
-### Install Dependencies
-```sh
-npm install
-```
+Lock Screen & Rest Timer Integration: Active workout tracking, ambient rest timers (MobileRestTimerBar), and session progress remain accessible right from your mobile lock screen.
 
-### Run Desktop App (Development)
-```sh
-npm run tauri dev
-```
-Starts the Vite development server on `http://localhost:1420` and launches the desktop window with hot reloading for both React frontend and Rust IPC commands.
+Categorized Workout History: Browse and filter past training sessions neatly organized by category, split, and muscle group.
 
-### Build Desktop Release
-```sh
-npm run tauri build
-```
-Compiles a production Windows `.exe` / `.msi` bundle in `src-tauri/target/release/bundle/nsis/`.
+Auto-Saving Session Drafts: Never lose a set mid-workout with automatic local session draft persistence (sessionDrafts.ts).
 
-### Build Android APK
-Run the automated build script:
-```sh
-npm run build:apk
-```
-*(or run directly in PowerShell: `powershell -ExecutionPolicy Bypass -File ./build-apk.ps1`)*
+🔒 100% Offline, Private & Lightweight
 
-This script compiles the frontend, resolves Android NDK/Rust JNI dependencies for `aarch64-linux-android`, builds the APK via Gradle, and outputs `workout-planner.apk` ready to install on physical Android devices.
+Zero Accounts or Telemetry: No sign-ups, no cloud servers, and no subscriptions. All training data and logs live locally on your device.
 
----
+Local Sync & Backup: Export, import, and synchronize your training data seamlessly across devices (sync.ts).
 
-## Testing & Verification
+Rust-Powered Performance: Built on Tauri v2, delivering near-instant startup times and a minimal RAM/CPU footprint.
 
-The project includes comprehensive test suites across both the Rust domain engine and the TypeScript frontend:
+🗂️ Project Architecture
 
-### Run Rust Test Suite (47 Tests)
-```sh
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-Runs:
-- **23 Unit Tests:** Volume calculations, cycle snapping, 1RM Epley leverage models, indirect volume offsets, deload halving, backpack load parsing, and storage lifecycle.
-- **24 Integration Tests:** Multi-week schedule simulations, fatigue-aware double progression thresholds, stall detection, exercise replacement invariants, and crash-recovery round-trips.
-
-### Linter & Code Formatting
-```sh
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
-```
-
-### Frontend Type-Checking & Bundle Compilation
-```sh
-npm run build
-```
-
----
-
-## Architecture & Codebase Map
-
-```
-workout-app/
-├── src-tauri/                          # Rust Backend Core
+Workout-Planner/
+├── src/                          # React + TypeScript Frontend
+│   ├── components/               # Desktop modals (CycleCalibration, EditSession, ExerciseSwap)
+│   ├── screens/                  # Desktop views (Dashboard, PlanOverview, Session, History, Settings)
+│   ├── mobile/                   # Dedicated Mobile UI layer
+│   │   ├── components/           # Mobile sheets, BottomNav, NumberPicker, RestTimerBar
+│   │   └── screens/              # Mobile views (Dashboard, Plan, Session, History, Onboarding, Settings)
+│   ├── utils/                    # Core frontend utilities (cycle, difficulty, equipment, restTimer, sync, units)
+│   ├── api.ts                    # Typed IPC bridge to Rust backend commands
+│   └── types.ts                  # Shared TypeScript interfaces & domain models
+├── src-tauri/                    # Rust Backend (Tauri v2)
+│   ├── data/                     # Static exercise library (exercises.json) & volume warning tiers
 │   ├── src/
-│   │   ├── main.rs                     # Tauri desktop entry point
-│   │   ├── lib.rs                      # Tauri IPC handler registrations & mobile entry
-│   │   ├── commands.rs                 # Tauri IPC command implementations & LAN sync
-│   │   ├── calibration.rs              # 1RM Epley formulas & bodyweight leverage models
-│   │   ├── scheduler.rs                # Cycle builder, snapping & exercise sequencing
-│   │   ├── progression.rs              # Double progression engine & stall detection
-│   │   ├── volume.rs                   # Weekly effective sets & 5-tier volume warnings
-│   │   ├── storage.rs                  # Atomic JSON file persistence manager
-│   │   └── models.rs                   # Shared Rust structs, enums & Serde models
-│   ├── data/
-│   │   ├── exercises.json              # 22 core movements with cues, ladders & equipment
-│   │   ├── warning_tiers.json          # Hypertrophy volume thresholds
-│   │   └── muscle_weights.json         # Direct & indirect contribution ratios
-│   ├── tests/
-│   │   └── worked_examples_and_edge_cases.rs # 24 integration & edge-case test suites
-│   ├── Cargo.toml
-│   └── tauri.conf.json
-├── src/                                # Frontend UI (React + TypeScript)
-│   ├── mobile/                         # Dedicated Mobile Touch Subsystem
-│   │   ├── components/                 # BottomSheet, NumpadSheet, MobileHeader, RestTimer
-│   │   ├── screens/                    # MobilePlan, MobileSession, MobileHistory, MobileSettings
-│   │   ├── MobileApp.tsx               # Mobile shell, tab navigator & modal manager
-│   │   └── mobile.css                  # Mobile-optimized dark theme styles
-│   ├── screens/                        # Desktop Interface Screens
-│   │   ├── OnboardingScreen.tsx        # Baseline strength calibration & equipment picker
-│   │   ├── PlanOverviewScreen.tsx      # Cycle calendar, sessions queue & deload control
-│   │   ├── SessionScreen.tsx           # Desktop session runner & set logger
-│   │   ├── DashboardScreen.tsx         # Volume analytics, tier gauges & warnings
-│   │   └── SettingsScreen.tsx          # Settings & Cross-Device Triple-Sync Hub
-│   ├── components/
-│   │   └── ExerciseSwapModal.tsx       # In-workout exercise replacement dialog
-│   ├── utils/
-│   │   ├── restTimer.ts                # Exercise-specific rest duration calculations
-│   │   ├── sound.ts                    # Audio chime synthesizer for timer completions
-│   │   ├── sync.ts                     # Gist cloud sync & payload compression
-│   │   ├── androidBack.ts              # Native Android back button listener & modal stack
-│   │   └── useIsMobile.ts              # Responsive viewport & User-Agent detection hook
-│   ├── types.ts                        # TypeScript interfaces mirroring Rust models
-│   ├── api.ts                          # Type-safe IPC invoke wrappers
-│   ├── App.tsx                         # App root & responsive UI router
-│   └── App.css                         # Desktop dark theme styling
-├── build-apk.ps1                       # Android ARM64 compilation script
-├── Architecture.md                     # Comprehensive technical specification
-└── package.json
-```
+│   │   ├── calibration.rs        # Cycle & volume calibration algorithms
+│   │   ├── commands.rs           # Tauri IPC command handlers
+│   │   ├── models.rs             # Core Rust data structures & serialization
+│   │   ├── progression.rs        # Progressive overload & load/rep calculation engine
+│   │   ├── scheduler.rs          # Workout split & microcycle scheduling logic
+│   │   ├── storage.rs            # Local filesystem persistence & state management
+│   │   └── volume.rs             # Direct/indirect weekly muscle volume analytics
+│   └── tests/                    # Rust integration & edge-case test suite
+└── build-rust-android.ps1        # Helper script for compiling Rust Android targets
+
+
+🚀 Getting Started
+
+⚡ Option A: Quick Install (Recommended)
+
+You don't need to compile anything yourself. Pre-built binaries are ready for download:
+
+Go to the Latest Releases page.
+
+Download the installer for your platform:
+
+Windows: .msi or .exe installer
+
+Android: .apk file (enable Install Unknown Apps if prompted)
+
+(macOS / Linux: check assets for .dmg / .AppImage / .deb)
+
+Run the installer and launch the app immediately.
+
+🛠️ Option B: Building From Source (Developers)
+
+Prerequisites
+
+Node.js (v18+ recommended)
+
+Rust & Cargo (latest stable toolchain)
+
+Tauri v2 Prerequisites (platform system dependencies)
+
+(Optional for Mobile) Android Studio & NDK for Android compilation
+
+1. Clone & Install Dependencies
+
+git clone https://github.com/Aebisc/Workout-Planner.git
+cd Workout-Planner
+npm install
+
+
+2. Run in Development Mode (Desktop)
+
+npm run tauri dev
+
+
+3. Build for Production (Desktop)
+
+npm run tauri build
+
+
+4. Build for Android (Mobile)
+
+Make sure your Android NDK environment variables are set, then run:
+
+./build-rust-android.ps1
+
+
+Or using the Tauri CLI directly:
+
+npm run tauri android dev
+npm run tauri android build
+
+
+🧪 Running Tests
+
+The core hypertrophy, scheduling, and progression algorithms in Rust are covered by unit and edge-case tests:
+
+cd src-tauri
+cargo test
+
+
+🆕 Latest Release Highlights
+
+Per-Exercise Weight Configuration: Fine-tune weight settings and increments for individual exercises.
+
+Categorized Workout History: Cleaner history organization grouped by workout categories and splits.
+
+Lock Screen Controls: View active workout timers and session status while your phone is locked.
+
+Stability & Polish: Extensive bug fixes, state synchronization improvements, and UI refinements across desktop and mobile.
+
+📄 License
+
+This project is open-source and available under the MIT License.
