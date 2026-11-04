@@ -77,7 +77,6 @@ You don't need to compile anything yourself. Pre-built binaries are ready for do
 2. Download the installer for your platform:
    * **Windows:** `.msi` or `.exe` installer
    * **Android:** `.apk` file (enable *Install Unknown Apps* if prompted)
-   * *(macOS / Linux: check assets for `.dmg` / `.AppImage` / `.deb`)*
 3. Run the installer and launch the app immediately.
 
 ---
